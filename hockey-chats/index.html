@@ -1256,22 +1256,34 @@ function oneTimerShot(c) {
   puck.oneTimer = nearNet;   // the goalie gets caught moving across
   popup('ONE-TIMER ! 💥', '#ffd23f'); cheer(0.25);
 }
-// shot direction: AI aims at the far corner, humans shoot where they face with a little aim assist
+// shot direction. AI: the corner away from the goalie, with some noise.
+// Players: always on net; the direction held (screen up/down = world z) picks the side of the goal.
 function shotDir(c) {
+  if (isHuman(c)) return playerShotDir(c, humanWantOf(c));
   const d = dirOf(c.team), gx = d * GX;
   const g = goalies[1 - c.team];
   const side = g.pos.z > 0.2 ? -1 : g.pos.z < -0.2 ? 1 : (Math.random() < 0.5 ? -1 : 1);
   const tz = side * (GW - 0.45) * rand(0.55, 1);
   const cp = carryPoint(c);
   let ax = gx - cp.x, az = tz - cp.z; const al = Math.hypot(ax, az) || 1; ax /= al; az /= al;
-  const f = fwd(c);
-  let dx = f.x, dz = f.z;
-  if (!isHuman(c)) {
-    const n = rand(-0.1, 0.1); dx = ax * Math.cos(n) - az * Math.sin(n); dz = ax * Math.sin(n) + az * Math.cos(n);
-  } else if (f.x * ax + f.z * az > 0.5) {
-    dx = lerp(f.x, ax, 0.75); dz = lerp(f.z, az, 0.75); const l = Math.hypot(dx, dz); dx /= l; dz /= l;
-  }
-  return { x: dx, z: dz };
+  const n = rand(-0.1, 0.1);
+  return { x: ax * Math.cos(n) - az * Math.sin(n), z: ax * Math.sin(n) + az * Math.cos(n) };
+}
+function playerShotDir(c, want) {
+  const gx = dirOf(c.team) * GX, cp = carryPoint(c);
+  // which side: the stick input if any, otherwise where the cat is turned
+  const lateral = want && Math.abs(want.z) > 0.2 ? want.z : fwd(c).z * 1.5;
+  const tz = clamp(lateral, -1, 1) * (GW - 0.3);   // 1.8: just inside the post
+  let dx = gx - cp.x, dz = tz - cp.z; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+  const n = rand(-1, 1) * Math.min(0.04, l * 0.0015);   // a touch less accurate from far away
+  return { x: dx * Math.cos(n) - dz * Math.sin(n), z: dx * Math.sin(n) + dz * Math.cos(n) };
+}
+// what a human player is currently asking for (world space), wherever the simulation runs
+function humanWantOf(c) {
+  if (net.role === 'guest') return c === ctrl[1] ? localWant() : { x: 0, z: 0 };
+  if (c === ctrl[0]) return localWant();
+  if (c === ctrl[1]) return net.remoteWant;
+  return { x: 0, z: 0 };
 }
 const shotSpeed = (c, power) => 15 + power * 25 + (c.boost > 0 ? 5 : 0) + (c.fire > 0 ? 6 : 0);
 const shotPower = (c, power) => (c.fire > 0 ? Math.max(power, 0.95) : power);   // catnip: every shot is a fire shot
@@ -1280,7 +1292,8 @@ function shoot(c, power, dir) {
   const { x: dx, z: dz } = dir || shotDir(c);
   const cp = carryPoint(c);
   const sp = shotSpeed(c, power);
-  release(c);
+  release(c);                    // the puck leaves from the stick the aim was computed from…
+  c.yaw = Math.atan2(dx, dz);   // …then the follow-through turns the cat toward it
   puck.vel.set(dx * sp, 0, dz * sp); puck.vy = 1.2 + power * 3.2; puck.y = 0.12;
   puck.super = power > 0.92; puck.oneTimer = false; puck.lastTouch = c;
   c.swing = 1; c.charging = false; c.charge = 0;
@@ -1613,11 +1626,12 @@ function updatePuck(dt, active) {
     if (d > reach || p.rolled === g || p.y > 1.5) continue;
     p.rolled = g;
     // save odds: faster shots are harder; a set butterfly helps; a one-timer catches the goalie moving
-    // (tuned with a 200-shot benchmark from the slot: super ~40%, medium ~20%, weak ~8%, one-timer ~45%)
+    // (tuned with a 300-shot benchmark from the slot, aiming at the open side:
+    //  super ~35%, medium ~20%, weak ~8%, one-timer ~40%)
     let chance = sp < 9 ? 1 : clamp(1.28 - sp / 55, 0.45, 0.95);
     if (g.pose === 1) chance += 0.12;
     if (g.pose === 2) chance -= 0.05;
-    if (p.oneTimer) chance -= 0.15;
+    if (p.oneTimer) chance -= 0.2;
     if (p.lastTouch && p.lastTouch.team === g.team) chance = 1;
     if (Math.random() < chance) {
       const s = -dirOf(g.team);
