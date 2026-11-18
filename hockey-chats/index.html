@@ -80,7 +80,7 @@
   <div id="charge"><div id="chargeFill"></div></div>
   <div id="info"></div>
   <div id="ping"></div>
-  <div id="help"><kbd>ZQSD</kbd>/<kbd>WASD</kbd>/<kbd>←↑→↓</kbd> patiner · <kbd>Espace</kbd> tir (maintenir) / plongeon<br><kbd>E</kbd> passe / changer de chat · <kbd>Shift</kbd> sprint-plongeon · <kbd>P</kbd> pause</div>
+  <div id="help"><kbd>ZQSD</kbd>/<kbd>WASD</kbd>/<kbd>←↑→↓</kbd> patiner · <kbd>Espace</kbd> tir (maintenir) / one-timer / plongeon<br><kbd>E</kbd> passe / changer de chat · <kbd>Shift</kbd> sprint-plongeon · <kbd>P</kbd> pause</div>
 </div>
 
 <div id="menu" class="overlay">
@@ -90,7 +90,8 @@
     <div class="controls">
       <b>Patiner</b><span>ZQSD / WASD / flèches</span>
       <b>Tirer</b><span>Maintenir Espace pour charger, relâcher pour tirer (barre pleine = super tir 🔥)</span>
-      <b>Plonger</b><span>Espace sans palet ou Shift : chipe le palet à l'adversaire</span>
+      <b>One-timer</b><span>Espace quand une passe arrive vers toi : tir direct à la réception, redoutable devant le filet</span>
+      <b>Plonger</b><span>Espace sans palet (ou Shift) : mise en échec, chipe le palet à l'adversaire</span>
       <b>Passe</b><span>E (sans palet : changer de chat)</span>
       <b>Échecs</b><span>Un plongeon bien lancé peut envoyer l'adversaire au tapis (pas à tous les coups !)</span>
       <b>Bonus</b><span>🐟 turbo · 🥛 costaud (inarrêtable) · 🌿 tirs de feu · 🐭 feulement qui renverse tout autour</span>
@@ -536,8 +537,10 @@ function makeCat(d, team) {
     }
   }
   if (d.goalie) {
-    const shell = mesh(new THREE.SphereGeometry(0.46, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.36), jM); shell.rotation.x = -0.35; head.add(shell);
-    const cageM = toon(0xf2f2f2);
+    // white goalie helmet (a jersey-coloured one blended with the body seen from above: the cat looked headless)
+    const shell = mesh(new THREE.SphereGeometry(0.455, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.3), toon(0xf6f6f6)); shell.rotation.x = -0.4; head.add(shell);
+    const stripe = mesh(new THREE.BoxGeometry(0.1, 0.05, 0.62), jM); stripe.position.set(0, 0.42, -0.06); stripe.rotation.x = -0.4; head.add(stripe);
+    const cageM = toon(0x2c2c34);
     for (const x of [-0.12, 0, 0.12]) { const b = mesh(new THREE.BoxGeometry(0.025, 0.42, 0.025), cageM, false); b.position.set(x, -0.04, 0.5); head.add(b); }
     for (const y of [-0.14, 0.04]) { const b = mesh(new THREE.BoxGeometry(0.42, 0.025, 0.025), cageM, false); b.position.set(0, y, 0.49); head.add(b); }
   }
@@ -574,6 +577,8 @@ ROSTER.forEach((list, team) => list.forEach((d, i) => {
     radius: d.goalie ? 0.75 : 0.55, dashCd: 0, dashT: 0, stun: 0, pickCd: 0, boost: 0,
     fallT: 0, fallDur: 1, fallDir: 0, noFallUntil: 0,   // knocked down: time left on the ice, total, direction of the fall (world yaw)
     strong: 0, fire: 0,                 // power-ups: milk (strong) and catnip (fire shots), seconds left
+    pose: 0, poseT: 0, diveDir: 0, react: 0, target: 0,   // goalie: butterfly / dive
+    oneTimer: 0,                        // skater: stick cocked for a first-time shot, seconds left
     charge: 0, charging: false, swing: 0, stride: Math.random() * 6, jumpV: 0, jumpY: 0,
     holdT: 0, beaten: 0, saveAnim: 0, phase: Math.random() * 10, pitch: rand(0.85, 1.25),
     ai: { decide: 0, target: 0.6 },
@@ -1020,7 +1025,7 @@ function sendSnap() {
   netSend({
     t: 's', st: state, cl: r2(clock), ot: overtime ? 1 : 0, sc: score, aq: net.ackSeq,
     ct: ctrl.map(c => (c ? cats.indexOf(c) : -1)),
-    c: cats.map(c => [r2(c.pos.x), r2(c.pos.z), r2(c.yaw), r2(c.vel.x), r2(c.vel.z), r2(c.stun), r2(c.charge), c.charging ? 1 : 0, r2(c.swing), r2(c.jumpY), r2(c.boost), r2(c.saveAnim), r2(c.dashT), r2(c.dashCd), r2(c.fallT), r2(c.fallDir), r2(c.fallDur), r2(c.strong), r2(c.fire)]),
+    c: cats.map(c => [r2(c.pos.x), r2(c.pos.z), r2(c.yaw), r2(c.vel.x), r2(c.vel.z), r2(c.stun), r2(c.charge), c.charging ? 1 : 0, r2(c.swing), r2(c.jumpY), r2(c.boost), r2(c.saveAnim), r2(c.dashT), r2(c.dashCd), r2(c.fallT), r2(c.fallDir), r2(c.fallDur), r2(c.strong), r2(c.fire), c.pose === 2 ? 2 * (c.diveDir || 1) : c.pose, r2(c.oneTimer)]),
     p: [r2(puck.pos.x), r2(puck.y), r2(puck.pos.z), r2(puck.vel.x), r2(puck.vel.z), puck.owner ? cats.indexOf(puck.owner) : -1, puck.super ? 1 : 0, puck.inNet],
     f: [fish.active ? 1 : 0, r2(fish.x), r2(fish.z), POWER_KEYS.indexOf(fish.type)],
   });
@@ -1061,6 +1066,7 @@ function applySnap(m) {
 // knock-down and power-up state from a snapshot row
 function applyStatus(c, a) {
   c.fallT = a[14] || 0; c.fallDir = a[15] || 0; c.fallDur = a[16] || 1; c.strong = a[17] || 0; c.fire = a[18] || 0;
+  const pose = a[19] || 0; c.pose = Math.abs(pose) >= 2 ? 2 : pose; c.diveDir = Math.sign(pose); c.oneTimer = a[20] || 0;
   if (!c.goalie) c.radius = c.strong > 0 ? 0.72 : 0.55;
 }
 // ---- guest-side prediction of its own cat
@@ -1092,7 +1098,8 @@ function reconcile(me, a, aq) {
 function sendInput(ev, extra = {}) {
   const w = localWant(), me = ctrl[1];
   const q = ++net.seq;
-  const dash = !!(me && state === 'play' && (ev === 'd' || (ev === 'sd' && puck.owner !== me)));
+  const dash = !!(me && state === 'play' && (ev === 'd' || (ev === 'sd' && puck.owner !== me && !oneTimerReady(me))));
+  if (me && state === 'play' && ev === 'sd' && puck.owner !== me && oneTimerReady(me)) me.oneTimer = 0.7;   // stick cocked right away
   if (me && state === 'play') { net.pending.push({ q, t: performance.now(), w, dash }); if (net.pending.length > 90) net.pending.shift(); }
   netSend({ t: 'in', q, w: [r2(w.x), r2(w.z)], ...(ev ? { e: ev } : {}), ...extra });
   net.sendAcc = 0;
@@ -1110,6 +1117,7 @@ function guestPuckStep(dt) {
 const dispPos = c => (net.role === 'guest' && c === ctrl[1] ? { x: c.pos.x + net.corr.x, z: c.pos.z + net.corr.z } : c.pos);
 
 function guestTick(dt) {
+  if (!(dt > 0)) return;
   time += dt;
   if (!net.gotSnap) return;
   const now = performance.now();
@@ -1223,11 +1231,30 @@ function netCollide(p, v, rad, rest, isPuck) {
 // ---------- actions
 function release(c) { puck.owner = null; c.pickCd = 0.35; puck.rolled = null; const cp = carryPoint(c); puck.pos.x = cp.x; puck.pos.z = cp.z; }
 function take(c) {
-  puck.owner = c; puck.super = false; puck.passTo = null; puck.lastTouch = c; puck.vy = 0; puck.y = 0.07;
+  puck.owner = c; puck.super = false; puck.oneTimer = false; puck.passTo = null; puck.lastTouch = c; puck.vy = 0; puck.y = 0.07;
   c.ai.decide = rand(0.25, 0.5);
   const h = ctrl[c.team];
   if (!demo && h && !c.goalie && h !== c) { h.charging = false; h.charge = 0; ctrl[c.team] = c; }
   sfx.tick();
+  if (c.oneTimer > 0 && !c.goalie && state === 'play') oneTimerShot(c);
+}
+// one-timer: Space pressed while a pass is coming — the cat cocks its stick and shoots on arrival
+function oneTimerReady(c) {
+  if (!c || puck.owner || puck.inNet || c.goalie || c.fallT > 0) return false;
+  const dx = c.pos.x - puck.pos.x, dz = c.pos.z - puck.pos.z, d = Math.hypot(dx, dz);
+  const sp = Math.hypot(puck.vel.x, puck.vel.z);
+  if (d > 11 || sp < 6) return false;
+  if (puck.passTo === c) return true;
+  return (puck.vel.x * dx + puck.vel.z * dz) / (sp * d || 1) > 0.85;   // coming right at me
+}
+function oneTimerShot(c) {
+  c.oneTimer = 0;
+  const gx = dirOf(c.team) * GX;
+  c.yaw = Math.atan2(gx - c.pos.x, -c.pos.z);   // swing through toward the net
+  const nearNet = Math.hypot(gx - c.pos.x, c.pos.z) < 12;
+  shoot(c, 0.9, shotDir(c));
+  puck.oneTimer = nearNet;   // the goalie gets caught moving across
+  popup('ONE-TIMER ! 💥', '#ffd23f'); cheer(0.25);
 }
 // shot direction: AI aims at the far corner, humans shoot where they face with a little aim assist
 function shotDir(c) {
@@ -1255,7 +1282,7 @@ function shoot(c, power, dir) {
   const sp = shotSpeed(c, power);
   release(c);
   puck.vel.set(dx * sp, 0, dz * sp); puck.vy = 1.2 + power * 3.2; puck.y = 0.12;
-  puck.super = power > 0.92; puck.lastTouch = c;
+  puck.super = power > 0.92; puck.oneTimer = false; puck.lastTouch = c;
   c.swing = 1; c.charging = false; c.charge = 0;
   sfx.slap(power);
   if (puck.super) { addShake(0.45); hitstop = 0.08; popup('SUPER TIR ! 🔥', '#ffd23f'); cheer(0.3); fx('burst', cp.x, cp.z, 20, 0xffa62b, 5); }
@@ -1269,14 +1296,29 @@ function pass(c, to) {
       return press > best.p ? { m, p: press } : best;
     }, { m: mates[0], p: -1 }).m;
   }
-  const lx = to.pos.x + to.vel.x * 0.35, lz = to.pos.z + to.vel.z * 0.35;
-  const cp = carryPoint(c);
-  let dx = lx - cp.x, dz = lz - cp.z; const dd = Math.hypot(dx, dz) || 1; dx /= dd; dz /= dd;
-  const sp = clamp(9 + dd * 1.1, 13, 27);
+  // aim at the receiver's stick where it will be when the puck gets there (intercept, refined 3 times)
+  const cp = carryPoint(c), rc = carryPoint(to);
+  let tx = rc.x, tz = rc.z, sp = 16, t = 0;
+  for (let i = 0; i < 3; i++) {
+    tx = rc.x + to.vel.x * t * 0.8; tz = rc.z + to.vel.z * t * 0.8;   // receivers ease off to take it
+    const dd = Math.hypot(tx - cp.x, tz - cp.z);
+    sp = clamp(10 + dd * 0.85, 14, 24);
+    t = dd / sp;
+  }
+  tx = clamp(tx, -RX + 1, RX - 1); tz = clamp(tz, -RZ + 1, RZ - 1);
+  let dx = tx - cp.x, dz = tz - cp.z; const dd = Math.hypot(dx, dz) || 1; dx /= dd; dz /= dd;
   release(c);
-  puck.vel.set(dx * sp, 0, dz * sp); puck.vy = 0.4; puck.super = false; puck.lastTouch = c; puck.passTo = to;
+  puck.vel.set(dx * sp, 0, dz * sp); puck.vy = 0.3; puck.super = false; puck.oneTimer = false; puck.lastTouch = c; puck.passTo = to;
   to.pickCd = 0; c.swing = 0.6; c.charging = false; c.charge = 0;
   sfx.slap(0.25);
+  // an AI receiver in front of the net often shoots it first-time
+  if (!isHuman(to) && Math.hypot(dirOf(to.team) * GX - tx, tz) < 12 && Math.random() < 0.6) to.oneTimer = t + 0.4;
+}
+// distance from point (px,pz) to segment (ax,az)-(bx,bz): catches a fast puck between two frames
+function segDist(ax, az, bx, bz, px, pz) {
+  const vx = bx - ax, vz = bz - az, l2 = vx * vx + vz * vz;
+  const k = l2 > 0 ? clamp(((px - ax) * vx + (pz - az) * vz) / l2, 0, 1) : 0;
+  return Math.hypot(ax + vx * k - px, az + vz * k - pz);
 }
 function dashCore(c, dir) {
   if (c.dashCd > 0 || c.stun > 0 || c.fallT > 0) return false;
@@ -1342,7 +1384,9 @@ function aiCarrier(c, dt) {
     const distG = Math.hypot(gx - c.pos.x, c.pos.z);
     const inFront = (gx - c.pos.x) * d > 1.2 && Math.abs(c.pos.z) < 10;
     const mateFree = mate && opps.every(o => dist(o.pos, mate.pos) > 3) && (mate.pos.x - c.pos.x) * d > -6;
-    if (inFront && distG < 16 && Math.random() < (distG < 9 ? 0.75 : 0.3)) { c.charging = true; c.charge = 0; c.ai.target = rand(0.35, 1.05); }
+    const mateInSlot = mateFree && Math.hypot(gx - mate.pos.x, mate.pos.z) < 10 && (gx - mate.pos.x) * d > 2;
+    if (mateInSlot && distG < 16 && Math.random() < 0.3) pass(c, mate);   // set up a one-timer
+    else if (inFront && distG < 16 && Math.random() < (distG < 9 ? 0.75 : 0.3)) { c.charging = true; c.charge = 0; c.ai.target = rand(0.35, 1.05); }
     else if (nearest < 2.6 && mateFree && Math.random() < 0.55) { pass(c, mate); }
     else if (nearest < 2 && c.dashCd <= 0 && Math.random() < 0.3) dash(c, { x: wx, z: wz });
   }
@@ -1356,7 +1400,8 @@ function aiWant(c, dt) {
   const mate = team.find(o => o !== c);
   let tx, tz, urgent = false;
   if (own && own.team === c.team) {
-    tx = clamp(own.pos.x + d * 7, -21, 21); tz = own.pos.z > 0 ? -5.5 : 5.5;
+    if ((gx - own.pos.x) * d < 15) { tx = gx - d * 6.5; tz = own.pos.z > 0 ? -2.5 : 2.5; }   // attacking: get to the slot
+    else { tx = clamp(own.pos.x + d * 7, -21, 21); tz = own.pos.z > 0 ? -5.5 : 5.5; }
   } else if (own) {
     if (own.goalie) { tx = gx - d * 13; tz = c.slot === 0 ? -4 : 4; }
     else {
@@ -1375,6 +1420,8 @@ function aiWant(c, dt) {
   if (!urgent && fish.active && !demo && Math.hypot(fish.x - c.pos.x, fish.z - c.pos.z) < 7) { tx = fish.x; tz = fish.z; urgent = true; }
   return seek(c, tx, tz, urgent);
 }
+// Goalie poses: 0 standing, 1 butterfly (drops to the ice, well set), 2 lateral dive (stretches toward
+// a shot it is not lined up with: longer reach, but it stays down a moment — rebounds!)
 function goalieUpdate(g, dt, active) {
   const s = -dirOf(g.team);
   const homeX = s * (GX - 1.1);
@@ -1382,14 +1429,37 @@ function goalieUpdate(g, dt, active) {
   if (!puck.owner) {
     const vx = puck.vel.x;
     if (vx * s > 2) { const t = (homeX - puck.pos.x) / vx; if (t > 0 && t < 1.2) tz = clamp(puck.pos.z + puck.vel.z * t, -GW - 0.1, GW + 0.1); }
+    // a shot coming: react after a short delay, then butterfly or dive
+    const toLine = (homeX - puck.pos.x) * s;
+    if (active && !g.pose && g.react <= 0 && vx * s > 7 && toLine > -0.5 && toLine < 15) {
+      const cross = puck.pos.z + puck.vel.z * ((homeX - puck.pos.x) / vx);
+      if (Math.abs(cross) < GW + 0.7) { g.react = rand(0.05, 0.14); g.target = clamp(cross, -GW - 0.3, GW + 0.3); }
+    }
   }
+  if (g.react > 0) {
+    g.react -= dt;
+    if (g.react <= 0) {
+      const off = g.target - g.pos.z;
+      if (Math.abs(off) > 0.6) { g.pose = 2; g.diveDir = Math.sign(off); g.poseT = 0.95; }
+      else { g.pose = 1; g.poseT = 0.6; }
+    }
+  }
+  if (g.pose) { g.poseT -= dt; if (g.poseT <= 0) { g.pose = 0; g.diveDir = 0; } }
+  if (!active) { g.pose = 0; g.react = 0; }
   if (g.beaten > 0) { g.beaten -= dt; tz = g.pos.z; }
+  if (g.pose) tz = g.pos.z;   // committed: no more tracking
   if (!active) tz = 0;
   const k = 1 - Math.exp(-9 * dt);
   let nx = lerp(g.pos.x, homeX, k), nz = lerp(g.pos.z, tz, k);
   const mv = Math.hypot(nx - g.pos.x, nz - g.pos.z), mx = 8.5 * dt;
   if (mv > mx) { nx = g.pos.x + (nx - g.pos.x) / mv * mx; nz = g.pos.z + (nz - g.pos.z) / mv * mx; }
-  g.vel.set((nx - g.pos.x) / dt, 0, (nz - g.pos.z) / dt); g.pos.x = nx; g.pos.z = nz;
+  if (g.pose === 2 && g.poseT > 0.6) {   // the dive itself: a fast lateral push toward the shot
+    const left = g.target - g.pos.z;
+    nz = g.pos.z + Math.sign(left) * Math.min(Math.abs(left), 13 * dt);
+  }
+  // (a 0 dt here used to give 0/0 = NaN, which then wiped out the goalie's head through the skating animation)
+  if (dt > 0) g.vel.set((nx - g.pos.x) / dt, 0, (nz - g.pos.z) / dt);
+  g.pos.x = nx; g.pos.z = nz;
   let ty = Math.atan2(puck.pos.x - g.pos.x, puck.pos.z - g.pos.z);
   if ((puck.pos.x - g.pos.x) * s > 0) ty = Math.atan2(-s, 0);
   if (puck.owner === g) {
@@ -1419,7 +1489,7 @@ function moveCat(c, want, dt) {
   else if (c.faceYaw !== null) ty = c.faceYaw;
   else if (wl > 0.15 && c.stun <= 0) ty = Math.atan2(want.x, want.z);
   else if (sp > 1.5) ty = Math.atan2(c.vel.x, c.vel.z);
-  if (ty !== null) { const d = angDiff(c.yaw, ty); const step = Math.sign(d) * Math.min(Math.abs(d), 11 * dt); c.yaw += step; c.turn = lerp(c.turn, step / dt, 0.15); }
+  if (ty !== null) { const d = angDiff(c.yaw, ty); const step = Math.sign(d) * Math.min(Math.abs(d), 11 * dt); c.yaw += step; if (dt > 0) c.turn = lerp(c.turn, step / dt, 0.15); }
   else c.turn = lerp(c.turn, 0, 0.15);
 }
 function collideCats() {
@@ -1466,11 +1536,15 @@ function fallChance(att, vic, impact) {
   if (att.strong > 0) return 0.9;
   if (att.dashT <= 0) return 0;                       // plain bumps never floor anyone
   if (time < vic.noFallUntil) return 0;               // just got back up: a moment of grace
-  let chance = (impact - 11) / 18;
+  // a dash carries its own momentum: catching a carrier from behind still counts (relative speed alone ~7)
+  impact = Math.max(impact, 15.5 * 0.75);
+  let chance = (impact - 10) / 16;
+  if (isHuman(att)) chance += 0.12;                   // a player's well-timed dive deserves its reward
   if (puck.owner === vic) chance += 0.08;
   if (vic.charging) chance += 0.12;
   if (Math.hypot(vic.vel.x, vic.vel.z) < 2) chance -= 0.1;   // well planted on its skates
-  return clamp(chance, 0, 0.32);
+  if (!isHuman(att)) chance *= 0.55;                  // AI dives a lot: keep AI-vs-AI falls at ~3 per minute
+  return clamp(chance, 0, isHuman(att) ? 0.55 : 0.3);
 }
 const FALL_LINES = ['BOUM ! 💥', 'PATATRAS ! 🙀', 'QUELLE MISE EN ÉCHEC !', 'À TERRE ! 😵'];
 function knockDown(c, nx, nz, impact) {
@@ -1502,7 +1576,7 @@ function updatePuck(dt, active) {
     p.vy -= 25 * dt; p.y = Math.max(0.07, p.y + p.vy * dt);
     return;
   }
-  const prevX = p.pos.x;
+  const prevX = p.pos.x, prevZ = p.pos.z;
   if (p.owner) {
     const cp = carryPoint(p.owner);
     p.pos.x = cp.x; p.pos.z = cp.z; p.vel.copy(p.owner.vel); p.y = 0.07;
@@ -1530,21 +1604,27 @@ function updatePuck(dt, active) {
   if (!active) return;
 
   const sp = Math.hypot(p.vel.x, p.vel.z);
+  if (p.passTo && sp < 4) p.passTo = null;   // a dead pass is anybody's puck
   // goalies
   for (const g of goalies) {
     const dx = p.pos.x - g.pos.x, dz = p.pos.z - g.pos.z, d = Math.hypot(dx, dz);
-    if (d > 1.8 && p.rolled === g) p.rolled = null;
-    if (d > 1.1 || p.rolled === g || p.y > 1.5) continue;
+    const reach = g.pose === 2 ? 1.55 : g.pose === 1 ? 1.25 : 1.1;
+    if (d > reach + 0.7 && p.rolled === g) p.rolled = null;
+    if (d > reach || p.rolled === g || p.y > 1.5) continue;
     p.rolled = g;
-    let chance = sp < 9 ? 1 : clamp(1.34 - sp / 32, 0.3, 0.94);
-    if (p.super) chance -= 0.22;
+    // save odds: faster shots are harder; a set butterfly helps; a one-timer catches the goalie moving
+    // (tuned with a 200-shot benchmark from the slot: super ~40%, medium ~20%, weak ~8%, one-timer ~45%)
+    let chance = sp < 9 ? 1 : clamp(1.28 - sp / 55, 0.45, 0.95);
+    if (g.pose === 1) chance += 0.12;
+    if (g.pose === 2) chance -= 0.05;
+    if (p.oneTimer) chance -= 0.15;
     if (p.lastTouch && p.lastTouch.team === g.team) chance = 1;
     if (Math.random() < chance) {
       const s = -dirOf(g.team);
       if (sp < 13) { take(g); g.holdT = 0.9; if (sp > 8 && p.lastTouch && p.lastTouch.team !== g.team) popup('ARRÊT ! 🧤', TEAM[g.team].css); }
       else {
         p.vel.x = -s * Math.max(5, Math.abs(p.vel.x) * 0.35); p.vel.z = rand(-7, 7) + Math.sign(dz || 1) * 4; p.vy = 3.5;
-        p.lastTouch = g; p.super = false; g.saveAnim = 0.4;
+        p.lastTouch = g; p.super = false; p.oneTimer = false; if (!g.pose) g.saveAnim = 0.4;
         popup(`ARRÊT DE ${g.name.toUpperCase()} ! 🧤`, TEAM[g.team].css); sfx.thud(); addShake(0.15); cheer(0.35);
       }
     } else { g.beaten = 0.6; g.saveAnim = -0.5 * Math.sign(dz || 1); }
@@ -1555,7 +1635,9 @@ function updatePuck(dt, active) {
     for (const c of cats) {
       if (c.goalie || c.stun > 0 || c.pickCd > 0 || c.fallT > 0) continue;
       const cp = carryPoint(c);
-      let ok = dist(cp, p.pos) < 0.8 || dist(c.pos, p.pos) < 0.95;
+      const mine = p.passTo === c;   // the intended receiver has soft hands
+      const rStick = mine ? 1.3 : 0.8, rBody = mine ? 1.45 : 0.95;
+      let ok = segDist(prevX, prevZ, p.pos.x, p.pos.z, cp.x, cp.z) < rStick || segDist(prevX, prevZ, p.pos.x, p.pos.z, c.pos.x, c.pos.z) < rBody;
       if (!ok && c === ctrl[1] && net.peer) {   // lag compensation: where the guest saw the puck
         const h = pastState(rewindMs());
         if (h) ok = Math.hypot(cp.x - h.p[0], cp.z - h.p[1]) < 0.8;
@@ -1572,7 +1654,7 @@ function placeForFaceoff() {
     skaters(t).forEach((c, i) => { c.pos.set(spots[t][i][0], 0, spots[t][i][1]); c.yaw = t === 0 ? Math.PI / 2 : -Math.PI / 2; });
     goalies[t].pos.set(-dirOf(t) * (GX - 1.1), 0, 0); goalies[t].yaw = t === 0 ? Math.PI / 2 : -Math.PI / 2;
   }
-  for (const c of cats) { c.vel.set(0, 0, 0); c.stun = 0; c.charge = 0; c.charging = false; c.dashT = 0; c.dashCd = 0; c.boost = 0; c.pickCd = 0; c.jumpY = 0; c.jumpV = 0; c.holdT = 0; c.beaten = 0; c.fallT = 0; c.strong = 0; c.fire = 0; }
+  for (const c of cats) { c.vel.set(0, 0, 0); c.stun = 0; c.charge = 0; c.charging = false; c.dashT = 0; c.dashCd = 0; c.boost = 0; c.pickCd = 0; c.jumpY = 0; c.jumpV = 0; c.holdT = 0; c.beaten = 0; c.fallT = 0; c.strong = 0; c.fire = 0; c.pose = 0; c.poseT = 0; c.react = 0; c.oneTimer = 0; }
   puck.owner = null; puck.inNet = 0; puck.passTo = null; puck.super = false; puck.rolled = null; puck.lastTouch = null; puck.frozen = true;
   ctrl[0] = demo ? null : skaters(0)[0];
   ctrl[1] = demo || !net.peer ? null : skaters(1)[0];
@@ -1662,7 +1744,11 @@ function act(team, ev, want, extra) {
   }
   if (state !== 'play' || paused) return;
   if (c.fallT > 0) { if (ev === 'p') switchPlayer(team); return; }   // on the ice: can only hand over to a teammate
-  if (ev === 'sd') { if (puck.owner === c) { c.charging = true; c.charge = 0; } else dash(c, want); }
+  if (ev === 'sd') {
+    if (puck.owner === c) { c.charging = true; c.charge = 0; }
+    else if (oneTimerReady(c)) c.oneTimer = 0.7;   // a pass is coming: cock the stick instead of diving
+    else dash(c, want);
+  }
   else if (ev === 'p') { if (puck.owner === c) pass(c); else switchPlayer(team); }
   else if (ev === 'd') dash(c, want);
 }
@@ -1734,6 +1820,7 @@ function pollPad() {
 
 // ============================================================ update
 function update(dt) {
+  if (!(dt > 0)) return;   // two ticks on the same timestamp (rAF + worker): nothing to simulate
   time += dt;
   if (state === 'faceoff') {
     stateT -= dt;
@@ -1756,7 +1843,7 @@ function update(dt) {
   const active = state === 'play';
   for (const c of cats) {
     c.dashCd -= dt; c.dashT -= dt; c.pickCd -= dt; c.boost -= dt; c.swing = Math.max(0, c.swing - dt * 3); c.faceYaw = null;
-    c.fallT = Math.max(0, c.fallT - dt); c.strong -= dt; c.fire -= dt;
+    c.fallT = Math.max(0, c.fallT - dt); c.strong -= dt; c.fire -= dt; c.oneTimer = Math.max(0, c.oneTimer - dt);
     if (!c.goalie) c.radius = c.strong > 0 ? 0.72 : 0.55;
     if (c.charging && puck.owner !== c) { c.charging = false; c.charge = 0; }
     if (c.goalie) { goalieUpdate(c, dt, active); continue; }
@@ -1864,8 +1951,9 @@ function animateCat(c, dt) {
   const m = c.model;
   m.root.position.set(c.pos.x, c.jumpY, c.pos.z);
   m.root.rotation.y = c.yaw;
-  const sp = Math.hypot(c.vel.x, c.vel.z);
+  const sp = Math.hypot(c.vel.x, c.vel.z) || 0;
   c.stride += sp * dt * 1.05;
+  if (!Number.isFinite(c.stride)) c.stride = 0;   // never let a bad value freeze the animation
   const amp = Math.min(sp / 8, 1);
   m.legs[0].rotation.x = Math.sin(c.stride) * 0.5 * amp; m.legs[1].rotation.x = -Math.sin(c.stride) * 0.5 * amp;
   m.legs[0].rotation.z = -Math.max(0, Math.sin(c.stride)) * 0.3 * amp; m.legs[1].rotation.z = Math.max(0, -Math.sin(c.stride)) * 0.3 * amp;
@@ -1873,12 +1961,20 @@ function animateCat(c, dt) {
   m.body.rotation.z = clamp(-c.turn * 0.05, -0.35, 0.35);
   m.body.position.y = 0;
   if (c.goalie) {
-    m.body.position.y = -0.12;
-    m.body.rotation.x = 0.25;
-    if (c.saveAnim) {
+    const ease = 1 - Math.exp(-18 * dt);
+    c.bfP = lerp(c.bfP || 0, c.pose === 1 ? 1 : 0, ease);   // butterfly
+    c.dvP = lerp(c.dvP || 0, c.pose === 2 ? 1 : 0, ease);   // dive
+    m.body.position.y = -0.12 - 0.42 * c.bfP + 0.12 * c.dvP;
+    m.body.rotation.x = 0.25 + 0.12 * c.bfP;
+    // butterfly: pads splayed flat on the ice
+    m.legs[0].rotation.z = lerp(m.legs[0].rotation.z, -1.25, c.bfP); m.legs[1].rotation.z = lerp(m.legs[1].rotation.z, 1.25, c.bfP);
+    // dive: lie on the side the shot is going
+    const lx = -Math.sin(c.yaw) * (c.diveDir || 1);
+    m.body.rotation.z = -1.3 * Math.sign(lx || 1) * c.dvP;
+    if (c.saveAnim && c.dvP < 0.05) {
       const a = c.saveAnim; m.body.rotation.z = a > 0 ? Math.sin(a * 7) * 0.4 : a * 1.4;
-      c.saveAnim = a > 0 ? Math.max(0, a - dt) : Math.min(0, a + dt * 0.8);
     }
+    if (c.saveAnim) c.saveAnim = c.saveAnim > 0 ? Math.max(0, c.saveAnim - dt) : Math.min(0, c.saveAnim + dt * 0.8);
   }
   // knocked down: tip over in the direction of the hit, lie there kicking, then get back up
   let fallP = 0;
@@ -1905,18 +2001,21 @@ function animateCat(c, dt) {
     s.position.set(Math.sin(time * 5 + c.phase - i * 0.55) * wag * t, 0.92 + Math.sin(t * 2.5) * 0.7, -0.36 - t * 0.55 + t * t * 0.32);
   });
   // stick
-  const wind = c.charging ? Math.min(1, c.charge) * 1.5 : 0;
+  const wind = c.charging ? Math.min(1, c.charge) * 1.5 : c.oneTimer > 0 ? 1.4 : 0;
   m.stick.rotation.x = wind - c.swing * 0.7;
   m.stick.rotation.y = c.charging ? -Math.min(1, c.charge) * 0.4 : 0;
   m.arms[1].rotation.x = -0.9 + wind * 0.6 - c.swing * 0.4;
   // celebrate: arms up
   if (c.jumpY > 0) { m.arms[0].rotation.x = -2.8; m.arms[1].rotation.x = -2.8; } else m.arms[0].rotation.x = -0.9;
   if (fallP > 0) { const f = Math.sin(time * 14 + c.phase) * 0.8; m.arms[0].rotation.x = -2.2 + f * fallP; m.arms[1].rotation.x = -2.2 - f * fallP; }
+  if (c.goalie && c.dvP > 0.05) { m.arms[0].rotation.x = lerp(-0.9, -2.7, c.dvP); m.arms[1].rotation.x = lerp(m.arms[1].rotation.x, -2.3, c.dvP); }
   const dizzy = c.stun > 0 || (c.fallT > 0 && c.fallDur - c.fallT > 0.2);
   m.stars.visible = dizzy;
   if (dizzy) m.stars.rotation.y += dt * 8;
 }
 function updateCamera(dt) {
+  const lock = window.__camLock;   // debug close-ups: { p: [x, y, z], t: [x, y, z] }
+  if (lock) { camera.position.set(...lock.p); camera.lookAt(...lock.t); return; }
   const target = clamp(puck.pos.x * 0.78, -12.5, 12.5);
   camState.x = lerp(camState.x, target, 1 - Math.exp(-3 * dt));
   const a = camera.aspect, k = a < 0.8 ? 1.9 : a < 1.3 ? 1.4 : 1;
@@ -2012,7 +2111,7 @@ placeForFaceoff();
 faceoff();
 requestAnimationFrame(frame);
 // debug handle (used for automated checks): `tick(dt)` advances the simulation without rendering
-window.__game = { cats, puck, score, net, ctrl, dispPos, fish, applyPower, tick: dt => update(dt), get state() { return state; } };
+window.__game = { cats, puck, score, net, ctrl, dispPos, fish, applyPower, tick: dt => update(dt), setClock: v => { clock = v; }, get state() { return state; } };
 </script>
 </body>
 </html>
