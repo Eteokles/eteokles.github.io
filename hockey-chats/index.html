@@ -693,7 +693,7 @@ const net = {
   corr: { x: 0, z: 0 },                             // guest: visual offset smoothing out prediction errors
   charge: { on: false, t0: 0 }, predShot: 0,        // guest: local shot charge, predicted shot window (until ts)
   hist: [],                                         // host: recent positions, for rewinding the guest's actions
-  relay: null, relayClients: [],                    // relay fallback link (MQTT broker) when no direct link works
+  relay: null, relayChannels: [],                   // relay fallback link (Cloudflare / MQTT) when no direct link works
 };
 const myTeam = () => (net.role === 'guest' ? 1 : 0);
 const isHuman = c => !!c && (c === ctrl[0] || c === ctrl[1]);
@@ -753,10 +753,17 @@ function bindConn(conn, onOpen) {
 
 // ---------- relay fallback
 // When no direct WebRTC link can be made (same box without hairpinning, strict NAT…) and no TURN server
-// answers, the two players talk through a free public MQTT broker instead: slower, but it always gets through.
-// ?relay=1 in the URL makes the joining player skip the direct attempt (for testing).
+// answers, the two players talk through a relay instead:
+//   1. our Cloudflare Worker + Durable Object (relay/ folder; Workers Free plan, so it can never bill)
+//   2. free public MQTT brokers, much slower, as a last resort
+// Each relay "channel" carries the same handshake: the guest says hello, the host answers welcome.
+// ?relay=1 in the URL makes the joining player skip the direct attempt (for testing);
+// ?relayurl=ws://localhost:8787 points at another Cloudflare relay (e.g. `wrangler dev`).
+const QS = new URLSearchParams(location.search);
+const CF_RELAY = QS.get('relayurl') || 'wss://hockey-chats-relay.hockey-chats-relay.workers.dev';
 const RELAY_BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt'];
-const FORCE_RELAY = new URLSearchParams(location.search).get('relay') === '1';
+const FORCE_RELAY = QS.get('relay') === '1';
+const SKIP_CF = QS.get('nocf') === '1';   // test the MQTT last resort
 // ?nodirect=1: the joining player gathers no network route, so the direct link fails like on a hostile network
 const NO_DIRECT = new URLSearchParams(location.search).get('nodirect') === '1';
 let mqttLoading = null;
@@ -772,71 +779,124 @@ function loadMqtt() {
 const relayTopic = (code, box) => `${PEER_PREFIX}${code}/${box}`;
 const relayId = () => Math.random().toString(36).slice(2, 10);
 // a relay link with the same surface as a PeerJS DataConnection: open, send, close, on(event)
-function relayConn(client, sendTopic) {
+function relayConn(channel, sendFn) {
   const h = {};
   const c = {
-    open: true, relayed: true, client,
-    send: s => { if (c.open) client.publish(sendTopic, s); },
+    open: true, relayed: true, channel,
+    send: s => { if (c.open) sendFn(s); },
     close: () => { if (!c.open) return; c.open = false; (h.close || []).forEach(f => f()); },
     on: (ev, f) => { (h[ev] ||= []).push(f); },
     emit: (ev, x) => (h[ev] || []).forEach(f => f(x)),
   };
   return c;
 }
-// host: also wait for a guest on the relay, on every broker
+// ---- channels: { name, close() } plus how messages come and go
+// Cloudflare relay: one WebSocket per player on /room/<CODE>; the Durable Object forwards between them
+function cfSocket(code, role) {
+  const ws = new WebSocket(`${CF_RELAY.replace(/\/$/, '')}/room/${code}?role=${role}`);
+  const keepAlive = setInterval(() => { if (ws.readyState === 1) ws.send('ping'); }, 25000);
+  ws.addEventListener('close', () => clearInterval(keepAlive));
+  return ws;
+}
+// host: one handler for every channel — the first guest to say hello gets the game
+function hostChannelMessage(channel, s, replyTo) {
+  if (net.relay && net.relay.channel === channel) return net.relay.emit('data', s);
+  let m; try { m = JSON.parse(s); } catch { return; }
+  if (!m || m.t !== 'hello' || !/^[a-z0-9]{4,12}$/.test(m.id || '')) return;
+  const send = replyTo(m.id);
+  if (net.peer || net.relay) return send(JSON.stringify({ t: 'error', msg: 'Partie déjà pleine 😾' }));
+  if (net.conn) { const stale = net.conn; net.conn = null; stale.close(); }   // a direct link that never opened
+  net.relay = relayConn(channel, send);
+  send(JSON.stringify({ t: 'welcome' }));
+  bindConn(net.relay, () => { net.peer = true; stopRelayListening(); startGame(); netSend({ t: 'start' }); });
+}
+// host: also wait for a guest on every relay channel
 async function hostRelay(code) {
+  if (!SKIP_CF) {
+    let tries = 0;
+    const open = () => {
+      const ws = cfSocket(code, 'host');
+      const channel = { name: 'cf', close: () => { channel.closed = true; ws.close(); } };
+      net.relayChannels.push(channel);
+      ws.addEventListener('message', e => { if (e.data !== 'pong') hostChannelMessage(channel, e.data, () => s => ws.readyState === 1 && ws.send(s)); });
+      ws.addEventListener('close', () => {
+        if (net.relay && net.relay.channel === channel) return net.relay.close();
+        net.relayChannels = net.relayChannels.filter(c => c !== channel);
+        if (!channel.closed && !net.peer && net.role === 'host' && tries++ < 5) setTimeout(open, 2000 * tries);   // keep listening
+      });
+    };
+    open();
+  }
   let lib; try { lib = await loadMqtt(); } catch { return; }
+  if (net.peer) return;
   for (const url of RELAY_BROKERS) {
     const client = lib.connect(url, { clientId: 'hc-' + relayId(), reconnectPeriod: 4000, connectTimeout: 8000 });
-    net.relayClients.push(client);
+    const channel = { name: 'mqtt', close: () => client.end(true) };
+    net.relayChannels.push(channel);
     client.on('error', () => {});
     client.on('connect', () => client.subscribe(relayTopic(code, 'h')));
-    client.on('message', (topic, buf) => {
-      const s = buf.toString();
-      if (net.relay && net.relay.client === client) return net.relay.emit('data', s);
-      let m; try { m = JSON.parse(s); } catch { return; }
-      if (!m || m.t !== 'hello' || !/^[a-z0-9]{4,12}$/.test(m.id || '')) return;
-      const back = relayTopic(code, 'g' + m.id);
-      if (net.peer || net.relay) return client.publish(back, JSON.stringify({ t: 'error', msg: 'Partie déjà pleine 😾' }));
-      if (net.conn) { const stale = net.conn; net.conn = null; stale.close(); }   // a direct link that never opened
-      net.relay = relayConn(client, back);
-      client.publish(back, JSON.stringify({ t: 'welcome' }));
-      bindConn(net.relay, () => { net.peer = true; stopRelayListening(); startGame(); netSend({ t: 'start' }); });
-    });
+    client.on('message', (topic, buf) => hostChannelMessage(channel, buf.toString(), id => s => client.publish(relayTopic(code, 'g' + id), s)));
   }
 }
-// once a game is on, drop the broker connections we don't use
+// once a game is on, drop the relay channels we don't use
 function stopRelayListening() {
-  for (const c of net.relayClients) if (!net.relay || net.relay.client !== c) c.end(true);
-  net.relayClients = net.relay ? [net.relay.client] : [];
+  for (const c of net.relayChannels) if (!net.relay || net.relay.channel !== c) c.close();
+  net.relayChannels = net.relay ? [net.relay.channel] : [];
 }
-// guest: say hello on the relay and wait for the host's welcome, broker after broker
+// guest: try one channel — resolves true when it got an answer (welcome or error)
+function guestTryCf(code, id) {
+  return new Promise(res => {
+    let ws;
+    try { ws = cfSocket(code, 'guest'); } catch { return res(false); }
+    const channel = { name: 'cf', close: () => ws.close() };
+    const giveUp = setTimeout(() => { ws.close(); res(false); }, 6000);
+    ws.addEventListener('open', () => ws.send(JSON.stringify({ t: 'hello', id })));
+    ws.addEventListener('error', () => { clearTimeout(giveUp); res(false); });
+    ws.addEventListener('message', e => {
+      if (e.data === 'pong') return;
+      if (net.relay && net.relay.channel === channel) return net.relay.emit('data', e.data);
+      let m; try { m = JSON.parse(e.data); } catch { return; }
+      if (m && m.t === 'welcome') { clearTimeout(giveUp); guestBound(channel, s => ws.readyState === 1 && ws.send(s)); res(true); }
+      else if (m && m.t === 'error') { clearTimeout(giveUp); ws.close(); netStatus(m.msg); res(true); }
+    });
+    ws.addEventListener('close', () => { if (net.relay && net.relay.channel === channel) net.relay.close(); });
+  });
+}
+function guestTryMqtt(lib, url, code, id) {
+  return new Promise(res => {
+    const client = lib.connect(url, { clientId: 'hc-' + relayId(), reconnectPeriod: 0, connectTimeout: 6000 });
+    const channel = { name: 'mqtt', close: () => client.end(true) };
+    const giveUp = setTimeout(() => { client.end(true); res(false); }, 9000);
+    client.on('error', () => {});
+    client.on('connect', () => client.subscribe(relayTopic(code, 'g' + id), () => client.publish(relayTopic(code, 'h'), JSON.stringify({ t: 'hello', id }))));
+    client.on('message', (topic, buf) => {
+      const s = buf.toString();
+      if (net.relay && net.relay.channel === channel) return net.relay.emit('data', s);
+      let m; try { m = JSON.parse(s); } catch { return; }
+      if (m && m.t === 'welcome') { clearTimeout(giveUp); guestBound(channel, x => client.publish(relayTopic(code, 'h'), x)); res(true); }
+      else if (m && m.t === 'error') { clearTimeout(giveUp); client.end(true); netStatus(m.msg); res(true); }
+    });
+  });
+}
+function guestBound(channel, send) {
+  net.relay = relayConn(channel, send);
+  net.relayChannels = [channel];
+  bindConn(net.relay, () => {
+    net.role = 'guest'; net.peer = true;
+    netStatus(channel.name === 'cf' ? 'Connecté via le relais Cloudflare ! La partie démarre…' : 'Connecté via un relais public (plus lent) ! La partie démarre…');
+  });
+}
+// guest: Cloudflare relay first, then the public brokers
 async function guestRelay(code) {
   if (net.peer) return;
   netStatus('Connexion directe impossible, passage par un relais… 🔁');
-  let lib; try { lib = await loadMqtt(); } catch { return netStatus('Relais indisponible (pas de connexion internet ?) 😿'); }
   const id = relayId();
+  if (!SKIP_CF && await guestTryCf(code, id)) return;
+  if (net.peer) return;
+  let lib; try { lib = await loadMqtt(); } catch { return netStatus('Relais indisponible (pas de connexion internet ?) 😿'); }
   for (const url of RELAY_BROKERS) {
     if (net.peer) return;
-    const done = await new Promise(res => {
-      const client = lib.connect(url, { clientId: 'hc-' + relayId(), reconnectPeriod: 0, connectTimeout: 6000 });
-      const giveUp = setTimeout(() => { client.end(true); res(false); }, 9000);
-      client.on('error', () => {});
-      client.on('connect', () => client.subscribe(relayTopic(code, 'g' + id), () => client.publish(relayTopic(code, 'h'), JSON.stringify({ t: 'hello', id }))));
-      client.on('message', (topic, buf) => {
-        const s = buf.toString();
-        if (net.relay && net.relay.client === client) return net.relay.emit('data', s);
-        let m; try { m = JSON.parse(s); } catch { return; }
-        if (m && m.t === 'welcome') {
-          clearTimeout(giveUp);
-          net.relay = relayConn(client, relayTopic(code, 'h'));
-          net.relayClients = [client];
-          bindConn(net.relay, () => { net.role = 'guest'; net.peer = true; netStatus('Connecté via relais ! La partie démarre…'); });
-          res(true);
-        } else if (m && m.t === 'error') { clearTimeout(giveUp); client.end(true); netStatus(m.msg); res(true); }
-      });
-    });
-    if (done) return;
+    if (await guestTryMqtt(lib, url, code, id)) return;
   }
   if (!net.peer) netStatus('Impossible de joindre l\'hôte 😿 — vérifie le code et réessaie');
 }
@@ -856,7 +916,7 @@ function renderPing() {
   const cls = v => (!v ? '' : v < 80 ? 'good' : v < 150 ? 'mid' : 'bad');
   const item = t => `<span class="t${t}">${t === 0 ? '🧡' : '💙'}</span> <b class="${cls(val[t])}">${val[t] ? Math.round(val[t]) : '–'}</b> ms`;
   const order = myTeam() === 0 ? [0, 1] : [1, 0];   // same order as the scoreboard
-  el.innerHTML = `📶 ${item(order[0])} · ${item(order[1])}` + (net.relay ? ' · 🔁 relais' : '');
+  el.innerHTML = `📶 ${item(order[0])} · ${item(order[1])}` + (net.relay ? (net.relay.channel.name === 'cf' ? ' · 🔁 relais Cloudflare' : ' · 🐢 relais public') : '');
 }
 addEventListener('pagehide', () => { if (net.peer) netSend({ t: 'bye' }); });
 function resetPeer() { if (net.peerObj) net.peerObj.destroy(); net.peerObj = null; net.conn = null; }
