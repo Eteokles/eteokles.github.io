@@ -51,6 +51,13 @@
   .btn { pointer-events:auto; font-family:inherit; font-size:26px; color:#fff; background:var(--orange); border:none; border-radius:16px; padding:12px 34px; box-shadow:0 6px 0 #b84a00; cursor:pointer; animation:bob 1.2s ease-in-out infinite; }
   .btn:active { transform:translateY(4px); box-shadow:0 2px 0 #b84a00; }
   @keyframes bob { 50% { transform:translateY(-4px); } }
+  .opts { display:flex; flex-wrap:wrap; gap:10px 18px; justify-content:center; margin:0 auto 18px; }
+  .opt { display:flex; flex-direction:column; align-items:center; gap:5px; }
+  .opt .label { font-size:14px; opacity:.85; letter-spacing:1px; }
+  .opt small { font-family:system-ui,sans-serif; font-size:11px; opacity:.6; }
+  .seg { display:flex; background:rgba(0,0,0,.35); border-radius:12px; padding:3px; gap:3px; }
+  .seg button { font-family:inherit; font-size:16px; color:#fff; background:transparent; border:none; border-radius:9px; padding:6px 12px; cursor:pointer; opacity:.6; }
+  .seg button.on { background:var(--orange); opacity:1; box-shadow:0 3px 0 #b84a00; }
   .modes { display:flex; flex-wrap:wrap; gap:18px; justify-content:center; align-items:flex-end; }
   .online { display:flex; flex-direction:column; gap:10px; align-items:stretch; background:rgba(255,255,255,.07); border-radius:16px; padding:10px 14px 14px; }
   .online .label { font-size:14px; opacity:.8; letter-spacing:1px; }
@@ -70,9 +77,9 @@
 <body>
 <div id="hud" class="hidden">
   <div id="score">
-    <div class="team t0"><span>RONRONS</span><span class="num" id="s0">0</span></div>
+    <div class="team t0"><span id="t0name">RONRONS</span><span class="num" id="s0">0</span></div>
     <div id="clock"><span id="clockTxt">3:00</span><small id="clockLbl">TEMPS</small></div>
-    <div class="team t1"><span class="num" id="s1">0</span><span>GRIFFES</span></div>
+    <div class="team t1"><span class="num" id="s1">0</span><span id="t1name">GRIFFES</span></div>
   </div>
   <div id="msg"></div>
   <div id="sub"></div>
@@ -80,19 +87,28 @@
   <div id="charge"><div id="chargeFill"></div></div>
   <div id="info"></div>
   <div id="ping"></div>
-  <div id="help"><kbd>ZQSD</kbd>/<kbd>WASD</kbd>/<kbd>←↑→↓</kbd> patiner · <kbd>Espace</kbd> tir (maintenir) / one-timer / plongeon<br><kbd>E</kbd> passe / changer de chat · <kbd>Shift</kbd> sprint-plongeon · <kbd>P</kbd> pause</div>
+  <div id="help"><kbd>ZQSD</kbd>/<kbd>WASD</kbd>/<kbd>←↑→↓</kbd> patiner · <kbd>Espace</kbd> tir (maintenir) / one-timer / plongeon<br><kbd>E</kbd> passe / changer de joueur · <kbd>Shift</kbd> sprint-plongeon · <kbd>P</kbd> pause</div>
 </div>
 
 <div id="menu" class="overlay">
   <div class="card">
     <h1>HOCKEY <span>CHATS</span></h1>
-    <p class="tag">Les Ronrons 🧡 contre les Griffes 💙 — 3 minutes, que des coups de patte.</p>
+    <p class="tag">Chats 🐱 ou chiens 🐶 — 3 minutes de hockey arcade, que des coups de patte.</p>
+    <div class="opts">
+      <div class="opt"><span class="label">Format</span>
+        <div class="seg" data-opt="size"><button data-v="2">2 contre 2</button><button data-v="3">3 contre 3</button></div>
+        <small>+ un gardien chacun</small></div>
+      <div class="opt"><span class="label">Ton équipe</span>
+        <div class="seg" data-opt="mine"><button data-v="cat">🐱 Chats</button><button data-v="dog">🐶 Chiens</button></div></div>
+      <div class="opt"><span class="label">Adversaires <small>(solo)</small></span>
+        <div class="seg" data-opt="foe"><button data-v="cat">🐱 Chats</button><button data-v="dog">🐶 Chiens</button></div></div>
+    </div>
     <div class="controls">
       <b>Patiner</b><span>ZQSD / WASD / flèches</span>
       <b>Tirer</b><span>Maintenir Espace pour charger, relâcher pour tirer (barre pleine = super tir 🔥)</span>
       <b>One-timer</b><span>Espace quand une passe arrive vers toi : tir direct à la réception, redoutable devant le filet</span>
       <b>Plonger</b><span>Espace sans palet (ou Shift) : mise en échec, chipe le palet à l'adversaire</span>
-      <b>Passe</b><span>E (sans palet : changer de chat)</span>
+      <b>Passe</b><span>E (sans palet : changer de joueur)</span>
       <b>Échecs</b><span>Un plongeon bien lancé peut envoyer l'adversaire au tapis (pas à tous les coups !)</span>
       <b>Bonus</b><span>🐟 turbo · 🥛 costaud (inarrêtable) · 🌿 tirs de feu · 🐭 feulement qui renverse tout autour</span>
     </div>
@@ -106,7 +122,7 @@
     </div>
     <div id="codeBig"></div>
     <div id="netStatus"></div>
-    <div class="hint">Entrée = solo · manette compatible · en ligne : l'hôte joue les Ronrons 🧡, l'invité les Griffes 💙</div>
+    <div class="hint">Entrée = solo · manette compatible · en ligne : l'hôte choisit le format et joue en orange 🧡, l'invité joue en bleu 💙 avec l'équipe qu'il a choisie</div>
   </div>
 </div>
 
@@ -130,18 +146,42 @@ import * as THREE from 'three';
 const RX = 30, RZ = 13, RR = 7;            // rink half-length, half-width, corner radius
 const GX = 26, GW = 2.1, GD = 1.8, GH = 1.3; // goal line, goal half-width, depth, height
 const MATCH_TIME = 180;
+// team colours are fixed (orange / blue); names and species come from the game options
 const TEAM = [
-  { name: 'Ronrons', color: 0xff7a1a, dark: 0xa8430a, css: '#ff7a1a' },
-  { name: 'Griffes', color: 0x2f7bff, dark: 0x1a3a8f, css: '#2f7bff' },
+  { name: 'Ronrons', color: 0xff7a1a, dark: 0xa8430a, css: '#ff7a1a', species: 'cat' },
+  { name: 'Griffes', color: 0x2f7bff, dark: 0x1a3a8f, css: '#2f7bff', species: 'cat' },
 ];
-const ROSTER = [
-  [ { name: 'Tigrou', fur: 0xf0912f, belly: 0xfff0d8, num: 7 },
-    { name: 'Moka',   fur: 0x7a5333, belly: 0xf0dcc0, num: 19 },
-    { name: 'Neige',  fur: 0xf5f1ea, belly: 0xffffff, num: 1, goalie: true, whisk: 0x444444 } ],
-  [ { name: 'Minuit', fur: 0x2a2a30, belly: 0xf2f2f2, num: 13 },
-    { name: 'Grisou', fur: 0x8a8e9a, belly: 0xe4e5ea, num: 22 },
-    { name: 'Pacha',  fur: 0xdcc6a2, belly: 0xf7eedf, ear: 0x4a3022, num: 30, goalie: true } ],
-];
+// 8 looks per species: team 0 uses [0..3], team 1 [4..7] (so two teams of the same species never
+// share a look). In each block the first 3 are skaters (the 3rd only plays 3v3) and the 4th is the goalie.
+const SPECIES = {
+  cat: {
+    teams: ['Ronrons', 'Griffes'],
+    pool: [
+      { name: 'Tigrou', fur: 0xf0912f, belly: 0xfff0d8 },
+      { name: 'Moka', fur: 0x7a5333, belly: 0xf0dcc0 },
+      { name: 'Caramel', fur: 0xe8b37a, belly: 0xfff6e8, ear: 0xc98a4a },
+      { name: 'Neige', fur: 0xf5f1ea, belly: 0xffffff, whisk: 0x444444 },
+      { name: 'Minuit', fur: 0x2a2a30, belly: 0xf2f2f2 },
+      { name: 'Grisou', fur: 0x8a8e9a, belly: 0xe4e5ea },
+      { name: 'Réglisse', fur: 0x3b2f2f, belly: 0xd9c8b0 },
+      { name: 'Pacha', fur: 0xdcc6a2, belly: 0xf7eedf, ear: 0x4a3022 },
+    ],
+  },
+  dog: {
+    teams: ['Toutous', 'Crocs'],
+    pool: [
+      { name: 'Rex', fur: 0xd9a35b, belly: 0xf6e1b8, ear: 0xb57f3d },                    // golden
+      { name: 'Biscuit', fur: 0x9a6236, belly: 0xf3e3cc, ear: 0x5a3820 },                // beagle
+      { name: 'Pixel', fur: 0xf2f2f2, belly: 0xffffff, ear: 0x1a1a1a, spots: 0x1a1a1a }, // dalmatian
+      { name: 'Médor', fur: 0x2b2622, belly: 0x4a403a },                                 // black lab
+      { name: 'Nala', fur: 0x8a8f99, belly: 0xf4f4f4, ear: 0x6d727b },                   // husky
+      { name: 'Filou', fur: 0xe0893a, belly: 0xfff4e6 },                                 // corgi
+      { name: 'Choupette', fur: 0xc9b9a6, belly: 0xf0e6da, ear: 0x8a6d55 },
+      { name: 'Brutus', fur: 0x5b4636, belly: 0xa88b6e, ear: 0x3a2b20 },
+    ],
+  },
+};
+const JERSEY_NUMS = [[7, 19, 11, 1], [13, 22, 9, 30]];
 const dirOf = t => (t === 0 ? 1 : -1);
 const clamp = THREE.MathUtils.clamp, lerp = THREE.MathUtils.lerp;
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -464,6 +504,18 @@ const rawSfx = {
     const g = AC.createGain(); env(g, t, 0.02, 0.18, 0.4);
     o.connect(g).connect(master); o.start(t); l.start(t); o.stop(t + 0.5); l.stop(t + 0.5);
   },
+  woof(pitch = 1, vol = 0.35) {   // "wouf wouf"
+    if (!AC) return; const t0 = AC.currentTime;
+    for (const [dt, k] of [[0, 1], [0.17, 0.92]]) {
+      const t = t0 + dt;
+      const o = AC.createOscillator(); o.type = 'sawtooth';
+      o.frequency.setValueAtTime(330 * pitch * k, t); o.frequency.exponentialRampToValueAtTime(150 * pitch * k, t + 0.13);
+      const f = AC.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 1500;
+      const g = AC.createGain(); env(g, t, 0.012, vol, 0.13);
+      o.connect(f).connect(g).connect(master); o.start(t); o.stop(t + 0.2);
+      noise(t, 0.07, 'bandpass', 900 * pitch, 1.4, vol * 0.45);
+    }
+  },
   hiss() {
     if (!AC) return; const t = AC.currentTime;
     noise(t, 0.7, 'highpass', 2600, 0.8, 0.5, 0.03);
@@ -481,8 +533,9 @@ function numberTex(n, color) {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 
-function makeCat(d, team) {
+function makeCat(d, team, species = 'cat') {
   const T = TEAM[team];
+  const dog = species === 'dog';
   const root = new THREE.Group(), body = new THREE.Group(); root.add(body);
   const furM = toon(d.fur), bellyM = toon(d.belly), jM = toon(T.color), jdM = toon(T.dark),
     pinkM = toon(0xff8fa3), blackM = toon(0x15151a), whiteM = toon(0xffffff), steelM = toon(0xd8e2ec), bootM = toon(0x26262c);
@@ -521,14 +574,34 @@ function makeCat(d, team) {
 
   const head = new THREE.Group(); head.position.y = 2.08; body.add(head);
   const skull = mesh(new THREE.SphereGeometry(0.42, 18, 14), furM); skull.scale.set(1.06, 0.92, 0.95); head.add(skull);
-  const muzzle = mesh(new THREE.SphereGeometry(0.19, 14, 10), bellyM); muzzle.position.set(0, -0.12, 0.31); muzzle.scale.set(1.35, 0.8, 0.8); head.add(muzzle);
-  const nose = mesh(new THREE.SphereGeometry(0.055, 8, 6), pinkM); nose.position.set(0, -0.04, 0.44); nose.scale.set(1.3, 0.8, 0.8); head.add(nose);
+  const ears = [];
+  if (dog) {
+    // long snout, big black nose, a tongue out, floppy ears
+    const snout = mesh(new THREE.SphereGeometry(0.2, 14, 10), bellyM); snout.position.set(0, -0.12, 0.38); snout.scale.set(1.1, 0.85, 1.55); head.add(snout);
+    const nose = mesh(new THREE.SphereGeometry(0.085, 10, 8), blackM); nose.position.set(0, -0.03, 0.66); nose.scale.set(1.3, 0.9, 0.9); head.add(nose);
+    const tongue = mesh(new THREE.SphereGeometry(0.075, 10, 6), pinkM, false); tongue.position.set(0.05, -0.29, 0.52); tongue.scale.set(0.9, 0.35, 1.3); head.add(tongue);
+    if (d.spots) {
+      const spotM = toon(d.spots);
+      for (const [x, y, z] of [[0.22, 0.2, 0.25], [-0.28, 0.1, 0.2], [0.05, 0.33, -0.1], [-0.15, -0.05, -0.32]]) { const s = mesh(new THREE.SphereGeometry(0.07, 8, 6), spotM, false); s.position.set(x, y, z); s.scale.set(1, 1, 0.5); s.lookAt(0, 0, 0); head.add(s); }
+    }
+  } else {
+    const muzzle = mesh(new THREE.SphereGeometry(0.19, 14, 10), bellyM); muzzle.position.set(0, -0.12, 0.31); muzzle.scale.set(1.35, 0.8, 0.8); head.add(muzzle);
+    const nose = mesh(new THREE.SphereGeometry(0.055, 8, 6), pinkM); nose.position.set(0, -0.04, 0.44); nose.scale.set(1.3, 0.8, 0.8); head.add(nose);
+  }
   const eyes = [];
   for (const sx of [-1, 1]) {
     const w = mesh(new THREE.SphereGeometry(0.1, 12, 10), whiteM, false); w.position.set(sx * 0.16, 0.06, 0.32); head.add(w);
-    const p = mesh(new THREE.SphereGeometry(0.064, 10, 8), d.goalie && team === 1 ? toon(0x3a7bd5) : blackM, false); p.position.set(sx * 0.16, 0.06, 0.405); p.scale.set(0.75, 1.25, 0.6); head.add(p);
+    const p = mesh(new THREE.SphereGeometry(0.064, 10, 8), d.goalie && team === 1 && !dog ? toon(0x3a7bd5) : blackM, false); p.position.set(sx * 0.16, 0.06, 0.405);
+    if (dog) p.scale.set(1, 1, 0.6); else p.scale.set(0.75, 1.25, 0.6);   // round pupils / cat slits
+    head.add(p);
     const sh = mesh(new THREE.SphereGeometry(0.022, 6, 4), whiteM, false); sh.position.set(sx * 0.16 + 0.025, 0.1, 0.445); head.add(sh);
     eyes.push(w, p, sh);
+    if (dog) {
+      const pivot = new THREE.Group(); pivot.position.set(sx * 0.33, 0.24, -0.02); pivot.rotation.z = sx * 0.3; head.add(pivot);
+      const ear = mesh(new THREE.SphereGeometry(0.19, 12, 8), earM); ear.scale.set(0.42, 1.0, 0.72); ear.position.y = -0.2; pivot.add(ear);
+      ears.push(pivot);
+      continue;
+    }
     const ear = mesh(new THREE.ConeGeometry(0.16, 0.34, 4), earM); ear.position.set(sx * 0.25, 0.37, -0.03); ear.rotation.set(0, Math.PI / 4, -sx * 0.38); head.add(ear);
     const inner = mesh(new THREE.ConeGeometry(0.09, 0.2, 4), pinkM, false); inner.position.set(sx * 0.24, 0.34, 0.04); inner.rotation.set(0, Math.PI / 4, -sx * 0.38); head.add(inner);
     for (const k of [-1, 1]) {
@@ -546,8 +619,8 @@ function makeCat(d, team) {
   }
 
   const tail = [];
-  for (let i = 0; i < 8; i++) {
-    const s = mesh(new THREE.SphereGeometry(0.12 - i * 0.007, 8, 6), i === 7 && d.ear ? earM : furM);
+  for (let i = 0, n = dog ? 5 : 8; i < n; i++) {   // dogs: a shorter, thicker tail
+    const s = mesh(new THREE.SphereGeometry((dog ? 0.13 : 0.12) - i * 0.007, 8, 6), i === n - 1 && d.ear && !dog ? earM : furM);
     body.add(s); tail.push(s);
   }
 
@@ -565,14 +638,50 @@ function makeCat(d, team) {
   ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02; root.add(ring);
 
   scene.add(root);
-  return { root, body, legs, arms, head, tail, stick, stars };
+  return { root, body, legs, arms, head, tail, stick, stars, ears, dog };
+}
+const sharedMats = () => new Set(matCache.values());
+function disposeModel(m) {
+  scene.remove(m.root);
+  const keep = sharedMats();
+  m.root.traverse(o => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material && !keep.has(o.material)) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
+  });
 }
 
 // ============================================================ entities
+// players (cats or dogs: `cats` is historical). Rebuilt for each game from its options.
 const cats = [];
-ROSTER.forEach((list, team) => list.forEach((d, i) => {
-  cats.push({
-    ...d, team, goalie: !!d.goalie, slot: i,
+const goalies = [null, null];
+const validCfg = cfg => !!cfg && (cfg.size === 2 || cfg.size === 3) && Array.isArray(cfg.species) && cfg.species.every(s => s === 'cat' || s === 'dog');
+let rosterKey = '';
+function buildRoster(cfg) {
+  const key = cfg.size + cfg.species.join();
+  if (key === rosterKey) return;   // same line-up: keep the models
+  rosterKey = key;
+  for (const c of cats) disposeModel(c.model);
+  cats.length = 0;
+  for (const t of [0, 1]) {
+    const sp = cfg.species[t], S = SPECIES[sp];
+    TEAM[t].name = S.teams[t]; TEAM[t].species = sp;
+    const block = S.pool.slice(4 * t, 4 * t + 4);
+    const looks = [...block.slice(0, cfg.size), block[3]];
+    looks.forEach((look, i) => {
+      const goalie = i === looks.length - 1;
+      cats.push(newPlayer({ ...look, goalie, num: JERSEY_NUMS[t][goalie ? 3 : i] }, t, i, sp));
+    });
+  }
+  goalies[0] = cats.find(c => c.team === 0 && c.goalie); goalies[1] = cats.find(c => c.team === 1 && c.goalie);
+  net.hist.length = 0; snapTarget.cats.length = 0;
+  updateTeamNames();
+}
+function updateTeamNames() {
+  $('t0name').textContent = TEAM[0].name.toUpperCase(); $('t1name').textContent = TEAM[1].name.toUpperCase();
+}
+function newPlayer(d, team, slot, species) {
+  return {
+    ...d, team, goalie: !!d.goalie, slot, species,
     pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: 0, turn: 0, faceYaw: null,
     radius: d.goalie ? 0.75 : 0.55, dashCd: 0, dashT: 0, stun: 0, pickCd: 0, boost: 0,
     fallT: 0, fallDur: 1, fallDir: 0, noFallUntil: 0,   // knocked down: time left on the ice, total, direction of the fall (world yaw)
@@ -582,11 +691,10 @@ ROSTER.forEach((list, team) => list.forEach((d, i) => {
     charge: 0, charging: false, swing: 0, stride: Math.random() * 6, jumpV: 0, jumpY: 0,
     holdT: 0, beaten: 0, saveAnim: 0, phase: Math.random() * 10, pitch: rand(0.85, 1.25),
     ai: { decide: 0, target: 0.6 },
-    model: makeCat(d, team),
-  });
-}));
+    model: makeCat(d, team, species),
+  };
+}
 const skaters = t => cats.filter(c => c.team === t && !c.goalie);
-const goalies = [cats.find(c => c.team === 0 && c.goalie), cats.find(c => c.team === 1 && c.goalie)];
 
 const puck = {
   pos: new THREE.Vector3(), vel: new THREE.Vector3(), y: 0.07, vy: 0, owner: null, lastTouch: null, passTo: null,
@@ -600,7 +708,7 @@ const POWERS = {
   fish:   { color: 0x7fe3ff, label: 'TURBO',      msg: n => `${n} croque le poisson ! 🐟 TURBO` },
   milk:   { color: 0xffffff, label: 'COSTAUD',    msg: n => `${n} boit du lait ! 🥛 COSTAUD` },
   catnip: { color: 0x8dff6a, label: 'TIRS DE FEU', msg: n => `${n} renifle l'herbe à chat ! 🌿 TIRS DE FEU` },
-  mouse:  { color: 0xff9ad5, label: 'FEULEMENT',  msg: n => `${n} attrape la souris… FFFSHHH ! 🐭` },
+  mouse:  { color: 0xff9ad5, label: 'FEULEMENT',  msg: (n, dog) => `${n} attrape la souris… ${dog ? 'GRRRRR' : 'FFFSHHH'} ! 🐭` },
 };
 const POWER_KEYS = Object.keys(POWERS);
 const fish = (() => {
@@ -728,6 +836,8 @@ const spray = (p, n, c) => fx('spray', { x: p.x, z: p.z }, n, c);
 const cheer = v => fx('cheer', v);
 const addShake = v => fx('shake', v);
 const sfx = new Proxy({}, { get: (_, n) => (...a) => fx('sfx', n, ...a) });
+// a player's own voice: cats meow, dogs bark
+const voice = (c, k = 1, vol = 0.3) => (c && c.species === 'dog' ? sfx.woof : sfx.meow)((c ? c.pitch : 1) * k, vol);
 
 // Online play is peer-to-peer (WebRTC via PeerJS). The public PeerJS server only introduces the two
 // browsers using the game code; PeerJS's default TURN relays take over when a direct link is impossible.
@@ -813,7 +923,7 @@ function hostChannelMessage(channel, s, replyTo) {
   if (net.conn) { const stale = net.conn; net.conn = null; stale.close(); }   // a direct link that never opened
   net.relay = relayConn(channel, send);
   send(JSON.stringify({ t: 'welcome' }));
-  bindConn(net.relay, () => { net.peer = true; stopRelayListening(); startGame(); netSend({ t: 'start' }); });
+  bindConn(net.relay, onGuestConnected);
 }
 // host: also wait for a guest on every relay channel
 async function hostRelay(code) {
@@ -887,7 +997,7 @@ function guestBound(channel, send) {
   net.relay = relayConn(channel, send);
   net.relayChannels = [channel];
   bindConn(net.relay, () => {
-    net.role = 'guest'; net.peer = true;
+    net.role = 'guest'; net.peer = true; sendPref();
     netStatus(channel.name === 'cf' ? 'Connecté via le relais Cloudflare ! La partie démarre…' : 'Connecté via un relais public (plus lent) ! La partie démarre…');
   });
 }
@@ -946,7 +1056,7 @@ function hostOnline() {
       return;
     }
     if (net.conn) { const stale = net.conn; net.conn = null; stale.close(); }   // the guest retried
-    bindConn(conn, () => { net.peer = true; stopRelayListening(); startGame(); netSend({ t: 'start' }); });
+    bindConn(conn, onGuestConnected);
   });
   // the free PeerJS service sometimes drops the waiting host: reconnect with the same code
   let retries = 0;
@@ -983,7 +1093,7 @@ function joinOnline(attempt = 0) {
   if (FORCE_RELAY) { resetPeer(); return void guestRelay(code); }
   peer.on('open', () => {
     const conn = peer.connect(PEER_PREFIX + code, { reliable: true });
-    bindConn(conn, () => { clearTimeout(timer); net.role = 'guest'; net.peer = true; netStatus('Connecté ! La partie démarre…'); });
+    bindConn(conn, () => { clearTimeout(timer); net.role = 'guest'; net.peer = true; sendPref(); netStatus('Connecté ! La partie démarre…'); });
     timer = setTimeout(fallback, 7000);   // no direct link by now: go through the relay
   });
   peer.on('error', e => {
@@ -1008,12 +1118,15 @@ function onNet(m) {
       if (s >= 0 && s < 5000) net.rtt = net.rtt ? lerp(net.rtt, s, 0.3) : s;
       break;
     }
-    case 'start': if (net.role === 'guest') guestStart(); break;
+    case 'start': if (net.role === 'guest') guestStart(m.cfg); break;
+    case 'pref':   // host: the guest's team choice
+      if (net.role === 'host' && (m.sp === 'cat' || m.sp === 'dog')) { net.guestSp = m.sp; if (net.prefWait) { clearTimeout(net.prefWait); net.prefWait = 0; hostStart(); } }
+      break;
     case 'in':
       if (net.role !== 'host') break;
       if (typeof m.q === 'number') net.ackSeq = Math.max(net.ackSeq, m.q);
       if (m.w) net.remoteWant = { x: clamp(+m.w[0] || 0, -1, 1), z: clamp(+m.w[1] || 0, -1, 1) };
-      if (m.e === 'restart') { if (state === 'end') { startGame(); netSend({ t: 'start' }); } }
+      if (m.e === 'restart') { if (state === 'end') hostStart(); }
       else if (m.e) act(1, m.e, net.remoteWant, m);
       break;
     case 's': if (net.role === 'guest') applySnap(m); break;
@@ -1032,6 +1145,7 @@ function sendSnap() {
 }
 const snapTarget = { cats: [], p: { x: 0, y: 0, z: 0, vx: 0, vz: 0 } };
 function applySnap(m) {
+  if (!Array.isArray(m.c) || m.c.length !== cats.length) return;   // not our line-up (yet)
   net.snapAt = performance.now();
   state = m.st; clock = m.cl; overtime = !!m.ot; score[0] = m.sc[0]; score[1] = m.sc[1]; updateScoreHud();
   $('clockLbl').textContent = overtime ? 'BUT EN OR' : 'TEMPS';
@@ -1164,8 +1278,21 @@ const rewindMs = () => Math.min(net.rtt, 200);
 function advancePuck(t) {
   for (let s = t; s > 1e-4 && !puck.owner && !puck.inNet && state === 'play'; s -= 1 / 60) updatePuck(Math.min(1 / 60, s), true);
 }
-function guestStart() {
+// ---- game options over the network: the guest sends its team choice, the host starts with the full line-up
+function sendPref() { netSend({ t: 'pref', sp: prefs.mine }); }
+function onGuestConnected() {
+  net.peer = true; stopRelayListening();
+  netStatus('Adversaire connecté ! 🐾');
+  net.prefWait = setTimeout(() => { net.prefWait = 0; hostStart(); }, 3000);   // in case its choice got lost
+}
+function hostStart() {
+  const cfg = { size: prefs.size, species: [prefs.mine, net.guestSp || 'cat'] };
+  startGame(cfg);
+  netSend({ t: 'start', cfg });
+}
+function guestStart(cfg) {
   initAudio();
+  if (validCfg(cfg)) buildRoster(cfg);
   demo = false; paused = false; net.gotSnap = false;
   net.pending.length = 0; net.corr.x = net.corr.z = 0; net.charge.on = false; net.predShot = 0; net.lastMe = null;
   $('menu').classList.add('hidden'); $('end').classList.add('hidden'); $('hud').classList.remove('hidden');
@@ -1346,7 +1473,8 @@ function switchPlayer(team) {
   const cur = ctrl[team]; if (!cur) return;
   const mates = skaters(team).filter(o => o !== cur);
   if (!mates.length) return;
-  cur.charging = false; cur.charge = 0; ctrl[team] = mates[0]; sfx.tick();
+  // 3v3: jump to the teammate closest to the puck
+  cur.charging = false; cur.charge = 0; ctrl[team] = closestTo(puck.pos, mates); sfx.tick();
 }
 function steal(c, o, hard) {
   if (o.strong > 0 && c.strong <= 0) {   // can't take the puck from a milk-powered cat
@@ -1359,7 +1487,7 @@ function steal(c, o, hard) {
   o.pickCd = 0.6; o.charging = false; o.charge = 0;
   if (hard) {
     if (Math.random() < odds) { const l = Math.hypot(c.vel.x, c.vel.z) || 1; knockDown(o, c.vel.x / l, c.vel.z / l, impact); }
-    else { o.stun = 0.8; o.vel.x += c.vel.x * 0.6; o.vel.z += c.vel.z * 0.6; sfx.thud(); sfx.meow(o.pitch * 1.2, 0.25); addShake(0.25); spray(o.pos, 16); }
+    else { o.stun = 0.8; o.vel.x += c.vel.x * 0.6; o.vel.z += c.vel.z * 0.6; sfx.thud(); voice(o, 1.2, 0.25); addShake(0.25); spray(o.pos, 16); }
     if (!demo) fx('steal', c.team);
   }
 }
@@ -1373,7 +1501,7 @@ function seek(c, tx, tz, urgent) {
 }
 function aiCarrier(c, dt) {
   const d = dirOf(c.team), gx = d * GX;
-  const mate = skaters(c.team).find(o => o !== c);
+  const mates = skaters(c.team).filter(o => o !== c);
   const opps = skaters(1 - c.team);
   let tx = gx - d * 4.5, tz = c.pos.z * 0.5;
   if ((gx - c.pos.x) * d < 8) tz = (c.pos.z >= 0 ? 1 : -1) * 2.5;
@@ -1396,11 +1524,12 @@ function aiCarrier(c, dt) {
     c.ai.decide = rand(0.2, 0.45);
     const distG = Math.hypot(gx - c.pos.x, c.pos.z);
     const inFront = (gx - c.pos.x) * d > 1.2 && Math.abs(c.pos.z) < 10;
-    const mateFree = mate && opps.every(o => dist(o.pos, mate.pos) > 3) && (mate.pos.x - c.pos.x) * d > -6;
-    const mateInSlot = mateFree && Math.hypot(gx - mate.pos.x, mate.pos.z) < 10 && (gx - mate.pos.x) * d > 2;
-    if (mateInSlot && distG < 16 && Math.random() < 0.3) pass(c, mate);   // set up a one-timer
+    const isFree = m => opps.every(o => dist(o.pos, m.pos) > 3) && (m.pos.x - c.pos.x) * d > -6;
+    const freeMates = mates.filter(isFree);
+    const slotMate = freeMates.find(m => Math.hypot(gx - m.pos.x, m.pos.z) < 10 && (gx - m.pos.x) * d > 2);
+    if (slotMate && distG < 16 && Math.random() < 0.3) pass(c, slotMate);   // set up a one-timer
     else if (inFront && distG < 16 && Math.random() < (distG < 9 ? 0.75 : 0.3)) { c.charging = true; c.charge = 0; c.ai.target = rand(0.35, 1.05); }
-    else if (nearest < 2.6 && mateFree && Math.random() < 0.55) { pass(c, mate); }
+    else if (nearest < 2.6 && freeMates.length && Math.random() < 0.55) { pass(c); }   // pass() picks the least pressured mate
     else if (nearest < 2 && c.dashCd <= 0 && Math.random() < 0.3) dash(c, { x: wx, z: wz });
   }
   return { x: wx, z: wz };
@@ -1410,28 +1539,49 @@ function aiWant(c, dt) {
   const own = puck.owner;
   if (own === c) return aiCarrier(c, dt);
   const team = skaters(c.team);
-  const mate = team.find(o => o !== c);
+  // the players not on the puck share out roles by slot order: role 0, then role 1 (3v3 only)
+  const roleAmong = lead => team.filter(o => o !== lead).sort((a, b) => a.slot - b.slot).indexOf(c);
   let tx, tz, urgent = false;
   if (own && own.team === c.team) {
-    if ((gx - own.pos.x) * d < 15) { tx = gx - d * 6.5; tz = own.pos.z > 0 ? -2.5 : 2.5; }   // attacking: get to the slot
-    else { tx = clamp(own.pos.x + d * 7, -21, 21); tz = own.pos.z > 0 ? -5.5 : 5.5; }
+    const role = roleAmong(own);
+    if ((gx - own.pos.x) * d < 15) {   // attacking
+      if (role <= 0) { tx = gx - d * 6.5; tz = own.pos.z > 0 ? -2.5 : 2.5; }   // get to the slot for a one-timer
+      else { tx = gx - d * 13; tz = own.pos.z > 0 ? 4.5 : -4.5; }           // the point: outlet and rebound
+    } else if (role <= 0) { tx = clamp(own.pos.x + d * 7, -21, 21); tz = own.pos.z > 0 ? -5.5 : 5.5; }
+    else { tx = clamp(own.pos.x - d * 4, -21, 21); tz = clamp(-own.pos.z * 0.4, -6, 6); }       // trail the play
   } else if (own) {
-    if (own.goalie) { tx = gx - d * 13; tz = c.slot === 0 ? -4 : 4; }
+    if (own.goalie) { tx = gx - d * 13; tz = [-4, 4, 0][c.slot] ?? 0; }
     else {
       const chaser = closestTo(own.pos, team);
       if (chaser === c) {
         tx = own.pos.x + own.vel.x * 0.2; tz = own.pos.z + own.vel.z * 0.2; urgent = true;
         if (dist(c.pos, own.pos) < 3.4 && c.dashCd <= 0 && Math.random() < dt * 1.5) dash(c, { x: own.pos.x - c.pos.x, z: own.pos.z - c.pos.z });
-      } else { tx = lerp(own.pos.x, ogx, 0.45); tz = own.pos.z * 0.5 + (mate ? -Math.sign(mate.pos.z || 1) * 1.5 : 0); }
+      } else if (roleAmong(chaser) <= 0) {   // between the carrier and our net, offset from the one pressing it
+        tx = lerp(own.pos.x, ogx, 0.5); tz = own.pos.z * 0.5 + (chaser.pos.z > own.pos.z ? -2.2 : 2.2);
+      } else {   // cut the passing lane to the carrier's nearest teammate (interceptions → counter-attacks)
+        const target = closestTo(own.pos, skaters(own.team).filter(o => o !== own));
+        if (target) { tx = (own.pos.x + target.pos.x) / 2; tz = (own.pos.z + target.pos.z) / 2; }
+        else { tx = lerp(own.pos.x, ogx, 0.3); tz = -own.pos.z * 0.4; }
+      }
     }
   } else {
     const chaser = (puck.passTo && puck.passTo.team === c.team) ? puck.passTo : closestTo(puck.pos, team);
     if (chaser === c) { tx = puck.pos.x + puck.vel.x * 0.25; tz = puck.pos.z + puck.vel.z * 0.25; urgent = true; }
-    else { tx = lerp(puck.pos.x, ogx, 0.35); tz = clamp(-puck.pos.z * 0.5, -8, 8); }
+    else if (roleAmong(chaser) <= 0) { tx = lerp(puck.pos.x, ogx, 0.35); tz = clamp(-puck.pos.z * 0.5, -8, 8); }
+    else { tx = clamp(lerp(puck.pos.x, gx, 0.3), -20, 20); tz = clamp(-puck.pos.z * 0.7, -7, 7); }   // ready for the breakout
   }
   // grab a nearby power-up when not busy with the puck
   if (!urgent && fish.active && !demo && Math.hypot(fish.x - c.pos.x, fish.z - c.pos.z) < 7) { tx = fish.x; tz = fish.z; urgent = true; }
-  return seek(c, tx, tz, urgent);
+  const w = seek(c, tx, tz, urgent);
+  if (!urgent) {   // don't bunch up with a teammate, carrier included (matters in 3v3)
+    for (const o of team) {
+      if (o === c) continue;
+      const dx = c.pos.x - o.pos.x, dz = c.pos.z - o.pos.z, dd = Math.hypot(dx, dz);
+      if (dd < 3.5 && dd > 0.01) { const k = (3.5 - dd) / 3.5 * 1.6; w.x += dx / dd * k; w.z += dz / dd * k; }
+    }
+    const l = Math.hypot(w.x, w.z); if (l > 1) { w.x /= l; w.z /= l; }
+  }
+  return w;
 }
 // Goalie poses: 0 standing, 1 butterfly (drops to the ice, well set), 2 lateral dive (stretches toward
 // a shot it is not lined up with: longer reach, but it stays down a moment — rebounds!)
@@ -1572,7 +1722,7 @@ function knockDown(c, nx, nz, impact) {
     release(c); c.pickCd = 0.9;
     puck.vel.set(c.vel.x * 0.7 + nx * 3 + rand(-2, 2), 0, c.vel.z * 0.7 + nz * 3 + rand(-2, 2)); puck.vy = 2;
   }
-  sfx.thud(); sfx.meow(c.pitch * 1.45, 0.3); addShake(0.4); spray(c.pos, 22); cheer(0.45);
+  sfx.thud(); voice(c, 1.45, 0.3); addShake(0.4); spray(c.pos, 22); cheer(0.45);
   hitstop = Math.max(hitstop, 0.05);
   if (Math.random() < 0.65) popup(Math.random() < 0.3 ? `${c.name} est à terre ! 😵` : FALL_LINES[(Math.random() * FALL_LINES.length) | 0], '#ffffff');
 }
@@ -1663,9 +1813,10 @@ function updatePuck(dt, active) {
 
 // ---------- flow
 function placeForFaceoff() {
-  const spots = [[[-1.4, 0], [-7, 5.5]], [[1.4, 0], [7, -5.5]]];
+  const spots = [[-1.4, 0], [-7, 5.5], [-7, -5.5]];   // centre, then wingers (mirrored for team 1)
   for (const t of [0, 1]) {
-    skaters(t).forEach((c, i) => { c.pos.set(spots[t][i][0], 0, spots[t][i][1]); c.yaw = t === 0 ? Math.PI / 2 : -Math.PI / 2; });
+    const m = t === 0 ? 1 : -1;
+    skaters(t).forEach((c, i) => { c.pos.set(spots[i][0] * m, 0, spots[i][1] * m); c.yaw = t === 0 ? Math.PI / 2 : -Math.PI / 2; });
     goalies[t].pos.set(-dirOf(t) * (GX - 1.1), 0, 0); goalies[t].yaw = t === 0 ? Math.PI / 2 : -Math.PI / 2;
   }
   for (const c of cats) { c.vel.set(0, 0, 0); c.stun = 0; c.charge = 0; c.charging = false; c.dashT = 0; c.dashCd = 0; c.boost = 0; c.pickCd = 0; c.jumpY = 0; c.jumpV = 0; c.holdT = 0; c.beaten = 0; c.fallT = 0; c.strong = 0; c.fire = 0; c.pose = 0; c.poseT = 0; c.react = 0; c.oneTimer = 0; }
@@ -1690,22 +1841,25 @@ function goalScored(team) {
   for (const c of cats) if (c.team === team) c.jumpV = 7 + Math.random() * 2;
   if (demo) return;
   sfx.horn(); sfx.cheer(1);
-  setTimeout(() => sfx.meow(lt ? lt.pitch : 1, 0.4), 350);
+  setTimeout(() => voice(lt, 1, 0.4), 350);
   showMsg('BUT !!!', 2.6, TEAM[team].css);
   showSub(own ? `Contre son camp de ${lt.name} 😹` : `${lt ? lt.name : '???'} marque pour les ${TEAM[team].name} !`, 2.8);
   if (overtime) gameOver = true;
 }
 function updateScoreHud() { $('s0').textContent = score[0]; $('s1').textContent = score[1]; }
-function startGame() {
+// a game's line-up: solo uses the menu options; online the host decides and sends it with 'start'
+function soloCfg() { return { size: prefs.size, species: [prefs.mine, prefs.foe] }; }
+function startGame(cfg = soloCfg()) {
   initAudio();
   demo = false; paused = false; gameOver = false; overtime = false;
+  buildRoster(cfg);
   score[0] = score[1] = 0; clock = MATCH_TIME; updateScoreHud();
   $('menu').classList.add('hidden'); $('end').classList.add('hidden'); $('hud').classList.remove('hidden');
   $('clockLbl').textContent = 'TEMPS';
   $('score').style.flexDirection = 'row';
   fish.active = false; fish.g.visible = false; fish.timer = 10;
   faceoff();
-  sfx.meow(1, 0.3);
+  voice(ctrl[myTeam()] || skaters(0)[0], 1, 0.3);
 }
 function endGame() {
   state = 'end';
@@ -1714,15 +1868,35 @@ function endGame() {
 function showEnd(s0, s1) {
   const me = myTeam(), mine = me === 0 ? s0 : s1, theirs = me === 0 ? s1 : s0;
   const win = mine > theirs;
-  $('endTitle').textContent = win ? 'VICTOIRE ! 😸' : 'DÉFAITE… 😿';
+  const dog = TEAM[me].species === 'dog';
+  $('endTitle').textContent = win ? (dog ? 'VICTOIRE ! 🐶' : 'VICTOIRE ! 😸') : (dog ? 'DÉFAITE… 🐾' : 'DÉFAITE… 😿');
   $('endTitle').style.color = win ? '#ffd23f' : '#9cc3ff';
-  $('endScore').textContent = `Ronrons ${s0} – ${s1} Griffes`;
+  $('endScore').textContent = `${TEAM[0].name} ${s0} – ${s1} ${TEAM[1].name}`;
   $('endHint').textContent = net.peer ? 'Entrée pour rejouer (les deux joueurs peuvent relancer)' : 'Entrée pour rejouer';
   $('end').classList.remove('hidden');
   rawSfx.horn(); if (win) { rawSfx.cheer(1.2); rawConfetti(0, 0, me); crowd.cheer(1.2); }
 }
 
 // ============================================================ input
+// ---- menu options (remembered in this browser when it allows it)
+const prefs = { size: 2, mine: 'cat', foe: 'dog' };
+try { Object.assign(prefs, JSON.parse(localStorage.getItem('hockeyChatsPrefs') || '{}')); } catch { /* private mode etc. */ }
+if (prefs.size !== 2 && prefs.size !== 3) prefs.size = 2;
+for (const k of ['mine', 'foe']) if (prefs[k] !== 'cat' && prefs[k] !== 'dog') prefs[k] = k === 'mine' ? 'cat' : 'dog';
+function renderPrefs() {
+  document.querySelectorAll('.seg').forEach(seg => {
+    const v = String(prefs[seg.dataset.opt]);
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  });
+}
+document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => {
+  const opt = b.parentElement.dataset.opt;
+  prefs[opt] = opt === 'size' ? Number(b.dataset.v) : b.dataset.v;
+  try { localStorage.setItem('hockeyChatsPrefs', JSON.stringify(prefs)); } catch { /* ignore */ }
+  renderPrefs(); b.blur();
+}));
+renderPrefs();
+
 const keys = {};
 const prevPad = {};
 function humanWant() {
@@ -1803,7 +1977,7 @@ function togglePause() {
 function onStart() {
   if (net.role === 'guest') { if (state === 'end') netSend({ t: 'in', e: 'restart' }); return; }
   if (net.role === 'host' && !net.peer) return;           // waiting for an opponent
-  if (state === 'end' && net.peer) { startGame(); netSend({ t: 'start' }); return; }
+  if (state === 'end' && net.peer) { hostStart(); return; }
   if (demo || state === 'end') startGame();
 }
 addEventListener('keydown', e => {
@@ -1923,8 +2097,8 @@ function update(dt) {
         if (c.goalie || c.fallT > 0 || Math.hypot(c.pos.x - fish.x, c.pos.z - fish.z) > 1.2) continue;
         const P = POWERS[fish.type];
         fish.active = false; fish.timer = rand(10, 16);
-        sfx.yum(); sfx.meow(c.pitch * 1.15, 0.25);
-        popup(P.msg(c.name), TEAM[c.team].css);
+        sfx.yum(); voice(c, 1.15, 0.25);
+        popup(P.msg(c.name, c.species === 'dog'), TEAM[c.team].css);
         fx('burst', fish.x, fish.z, 30, P.color, 4);
         applyPower(c, fish.type);
         break;
@@ -2012,8 +2186,11 @@ function animateCat(c, dt) {
   const wag = 0.25 + amp * 0.2 + (c.jumpY > 0 ? 0.4 : 0);
   m.tail.forEach((s, i) => {
     const t = i / (m.tail.length - 1);
-    s.position.set(Math.sin(time * 5 + c.phase - i * 0.55) * wag * t, 0.92 + Math.sin(t * 2.5) * 0.7, -0.36 - t * 0.55 + t * t * 0.32);
+    if (m.dog) s.position.set(Math.sin(time * 13 + c.phase) * (0.12 + wag * 0.3) * t, 0.95 + t * 0.55, -0.38 - t * 0.3);   // happy fast wag, held up
+    else s.position.set(Math.sin(time * 5 + c.phase - i * 0.55) * wag * t, 0.92 + Math.sin(t * 2.5) * 0.7, -0.36 - t * 0.55 + t * t * 0.32);
   });
+  // floppy dog ears bounce with the stride
+  m.ears.forEach((e, i) => { const sx = i === 0 ? -1 : 1; e.rotation.z = sx * (0.3 + Math.abs(Math.sin(c.stride)) * 0.35 * amp); e.rotation.x = -amp * 0.4; });
   // stick
   const wind = c.charging ? Math.min(1, c.charge) * 1.5 : c.oneTimer > 0 ? 1.4 : 0;
   m.stick.rotation.x = wind - c.swing * 0.7;
@@ -2121,11 +2298,12 @@ addEventListener('resize', () => {
 });
 
 // boot: AI vs AI demo behind the menu
+buildRoster({ size: 2, species: ['cat', 'dog'] });   // the menu's background match: cats vs dogs
 placeForFaceoff();
 faceoff();
 requestAnimationFrame(frame);
 // debug handle (used for automated checks): `tick(dt)` advances the simulation without rendering
-window.__game = { cats, puck, score, net, ctrl, dispPos, fish, applyPower, tick: dt => update(dt), setClock: v => { clock = v; }, get state() { return state; } };
+window.__game = { cats, puck, score, net, ctrl, dispPos, fish, applyPower, tick: dt => update(dt), setClock: v => { clock = v; }, roster: cfg => { buildRoster(cfg); faceoff(); }, get state() { return state; } };
 </script>
 </body>
 </html>
