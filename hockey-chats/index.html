@@ -788,15 +788,27 @@ function hostOnline() {
     }
     bindConn(conn, () => { net.peer = true; startGame(); netSend({ t: 'start' }); });
   });
+  // the free PeerJS service sometimes drops the waiting host: reconnect with the same code
+  let retries = 0;
+  const reconnect = () => {
+    if (net.peer || peer.destroyed || !peer.disconnected) return;
+    retries++;
+    netStatus('Connexion au service perdue, reconnexion… 🔄');
+    setTimeout(() => { if (!peer.destroyed && peer.disconnected) peer.reconnect(); }, 1000 * retries);
+  };
+  peer.on('disconnected', () => { if (retries < 5) reconnect(); });
   peer.on('error', e => {
     if (net.peer) return;
+    if (TRANSIENT.includes(e.type) && retries < 5 && net.role === 'host') return reconnect();
     resetPeer();
     if (e.type === 'unavailable-id') return hostOnline(); // code already taken: pick another
     net.role = null; $('codeBig').textContent = '';
     netStatus('Erreur réseau (' + e.type + ') — réessaie 😿');
   });
 }
-function joinOnline() {
+const TRANSIENT = ['network', 'server-error', 'socket-error', 'socket-closed', 'disconnected'];
+function joinOnline(attempt = 0) {
+  if (typeof attempt !== 'number') attempt = 0;   // called from a click/key handler
   const code = $('codeIn').value.trim().toUpperCase();
   if (!/^[A-Z]{4}$/.test(code)) return netStatus('Entre le code à 4 lettres donné par ton adversaire');
   if (!window.Peer) return netStatus('Bibliothèque réseau introuvable (pas de connexion internet ?) 😿');
@@ -815,6 +827,10 @@ function joinOnline() {
   peer.on('error', e => {
     if (net.peer) return;
     clearTimeout(timer); resetPeer();
+    if (TRANSIENT.includes(e.type) && attempt < 2) {   // flaky matchmaking service: try again
+      netStatus('Connexion instable, nouvel essai… 🔄');
+      return setTimeout(() => joinOnline(attempt + 1), 1500);
+    }
     netStatus(e.type === 'peer-unavailable' ? 'Code inconnu 🙀 (la partie est-elle bien créée ?)' : 'Erreur réseau (' + e.type + ') — réessaie 😿');
   });
 }
