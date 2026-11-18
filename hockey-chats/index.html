@@ -693,6 +693,7 @@ const net = {
   corr: { x: 0, z: 0 },                             // guest: visual offset smoothing out prediction errors
   charge: { on: false, t0: 0 }, predShot: 0,        // guest: local shot charge, predicted shot window (until ts)
   hist: [],                                         // host: recent positions, for rewinding the guest's actions
+  relay: null, relayClients: [],                    // relay fallback link (MQTT broker) when no direct link works
 };
 const myTeam = () => (net.role === 'guest' ? 1 : 0);
 const isHuman = c => !!c && (c === ctrl[0] || c === ctrl[1]);
@@ -743,10 +744,101 @@ function netLost() {
 function newCode() { const L = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; return Array.from({ length: 4 }, () => L[(Math.random() * L.length) | 0]).join(''); }
 function bindConn(conn, onOpen) {
   net.conn = conn;
-  conn.on('open', () => { net.lastRecv = performance.now(); onOpen(); });
-  conn.on('data', d => { net.lastRecv = performance.now(); let m; try { m = typeof d === 'string' ? JSON.parse(d) : d; } catch { return; } if (m && typeof m === 'object') onNet(m); });
-  conn.on('close', netLost);
-  conn.on('error', netLost);
+  if (conn.open) { net.lastRecv = performance.now(); queueMicrotask(onOpen); }   // relay links are open from the start
+  else conn.on('open', () => { net.lastRecv = performance.now(); onOpen(); });
+  conn.on('data', d => { if (net.conn !== conn) return; net.lastRecv = performance.now(); let m; try { m = typeof d === 'string' ? JSON.parse(d) : d; } catch { return; } if (m && typeof m === 'object') onNet(m); });
+  conn.on('close', () => { if (net.conn === conn) netLost(); });   // ignore links we already gave up on
+  conn.on('error', () => { if (net.conn === conn) netLost(); });
+}
+
+// ---------- relay fallback
+// When no direct WebRTC link can be made (same box without hairpinning, strict NAT…) and no TURN server
+// answers, the two players talk through a free public MQTT broker instead: slower, but it always gets through.
+// ?relay=1 in the URL makes the joining player skip the direct attempt (for testing).
+const RELAY_BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt'];
+const FORCE_RELAY = new URLSearchParams(location.search).get('relay') === '1';
+// ?nodirect=1: the joining player gathers no network route, so the direct link fails like on a hostile network
+const NO_DIRECT = new URLSearchParams(location.search).get('nodirect') === '1';
+let mqttLoading = null;
+function loadMqtt() {
+  if (window.mqtt) return Promise.resolve(window.mqtt);
+  return (mqttLoading ||= new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js';
+    s.onload = () => res(window.mqtt); s.onerror = () => { mqttLoading = null; rej(new Error('mqtt')); };
+    document.head.appendChild(s);
+  }));
+}
+const relayTopic = (code, box) => `${PEER_PREFIX}${code}/${box}`;
+const relayId = () => Math.random().toString(36).slice(2, 10);
+// a relay link with the same surface as a PeerJS DataConnection: open, send, close, on(event)
+function relayConn(client, sendTopic) {
+  const h = {};
+  const c = {
+    open: true, relayed: true, client,
+    send: s => { if (c.open) client.publish(sendTopic, s); },
+    close: () => { if (!c.open) return; c.open = false; (h.close || []).forEach(f => f()); },
+    on: (ev, f) => { (h[ev] ||= []).push(f); },
+    emit: (ev, x) => (h[ev] || []).forEach(f => f(x)),
+  };
+  return c;
+}
+// host: also wait for a guest on the relay, on every broker
+async function hostRelay(code) {
+  let lib; try { lib = await loadMqtt(); } catch { return; }
+  for (const url of RELAY_BROKERS) {
+    const client = lib.connect(url, { clientId: 'hc-' + relayId(), reconnectPeriod: 4000, connectTimeout: 8000 });
+    net.relayClients.push(client);
+    client.on('error', () => {});
+    client.on('connect', () => client.subscribe(relayTopic(code, 'h')));
+    client.on('message', (topic, buf) => {
+      const s = buf.toString();
+      if (net.relay && net.relay.client === client) return net.relay.emit('data', s);
+      let m; try { m = JSON.parse(s); } catch { return; }
+      if (!m || m.t !== 'hello' || !/^[a-z0-9]{4,12}$/.test(m.id || '')) return;
+      const back = relayTopic(code, 'g' + m.id);
+      if (net.peer || net.relay) return client.publish(back, JSON.stringify({ t: 'error', msg: 'Partie déjà pleine 😾' }));
+      if (net.conn) { const stale = net.conn; net.conn = null; stale.close(); }   // a direct link that never opened
+      net.relay = relayConn(client, back);
+      client.publish(back, JSON.stringify({ t: 'welcome' }));
+      bindConn(net.relay, () => { net.peer = true; stopRelayListening(); startGame(); netSend({ t: 'start' }); });
+    });
+  }
+}
+// once a game is on, drop the broker connections we don't use
+function stopRelayListening() {
+  for (const c of net.relayClients) if (!net.relay || net.relay.client !== c) c.end(true);
+  net.relayClients = net.relay ? [net.relay.client] : [];
+}
+// guest: say hello on the relay and wait for the host's welcome, broker after broker
+async function guestRelay(code) {
+  if (net.peer) return;
+  netStatus('Connexion directe impossible, passage par un relais… 🔁');
+  let lib; try { lib = await loadMqtt(); } catch { return netStatus('Relais indisponible (pas de connexion internet ?) 😿'); }
+  const id = relayId();
+  for (const url of RELAY_BROKERS) {
+    if (net.peer) return;
+    const done = await new Promise(res => {
+      const client = lib.connect(url, { clientId: 'hc-' + relayId(), reconnectPeriod: 0, connectTimeout: 6000 });
+      const giveUp = setTimeout(() => { client.end(true); res(false); }, 9000);
+      client.on('error', () => {});
+      client.on('connect', () => client.subscribe(relayTopic(code, 'g' + id), () => client.publish(relayTopic(code, 'h'), JSON.stringify({ t: 'hello', id }))));
+      client.on('message', (topic, buf) => {
+        const s = buf.toString();
+        if (net.relay && net.relay.client === client) return net.relay.emit('data', s);
+        let m; try { m = JSON.parse(s); } catch { return; }
+        if (m && m.t === 'welcome') {
+          clearTimeout(giveUp);
+          net.relay = relayConn(client, relayTopic(code, 'h'));
+          net.relayClients = [client];
+          bindConn(net.relay, () => { net.role = 'guest'; net.peer = true; netStatus('Connecté via relais ! La partie démarre…'); });
+          res(true);
+        } else if (m && m.t === 'error') { clearTimeout(giveUp); client.end(true); netStatus(m.msg); res(true); }
+      });
+    });
+    if (done) return;
+  }
+  if (!net.peer) netStatus('Impossible de joindre l\'hôte 😿 — vérifie le code et réessaie');
 }
 // a closed tab can take a long time to surface as a WebRTC close: say goodbye + heartbeat
 // the ping doubles as RTT measurement: the other side echoes `ts` back in a pong
@@ -764,7 +856,7 @@ function renderPing() {
   const cls = v => (!v ? '' : v < 80 ? 'good' : v < 150 ? 'mid' : 'bad');
   const item = t => `<span class="t${t}">${t === 0 ? '🧡' : '💙'}</span> <b class="${cls(val[t])}">${val[t] ? Math.round(val[t]) : '–'}</b> ms`;
   const order = myTeam() === 0 ? [0, 1] : [1, 0];   // same order as the scoreboard
-  el.innerHTML = `📶 ${item(order[0])} · ${item(order[1])}`;
+  el.innerHTML = `📶 ${item(order[0])} · ${item(order[1])}` + (net.relay ? ' · 🔁 relais' : '');
 }
 addEventListener('pagehide', () => { if (net.peer) netSend({ t: 'bye' }); });
 function resetPeer() { if (net.peerObj) net.peerObj.destroy(); net.peerObj = null; net.conn = null; }
@@ -777,16 +869,19 @@ function hostOnline() {
   const peer = new window.Peer(PEER_PREFIX + code);
   net.peerObj = peer;
   peer.on('open', () => {
+    const first = net.role !== 'host';
     net.role = 'host';
     $('codeBig').textContent = code;
     netStatus('Donne ce code à ton adversaire, où qu\'il soit sur internet. En attente… 🐾');
+    if (first) hostRelay(code);   // also reachable through the relay fallback
   });
   peer.on('connection', conn => {
-    if (net.conn) { // already have an opponent
+    if (net.peer || net.relay) { // already have an opponent
       conn.on('open', () => { conn.send(JSON.stringify({ t: 'error', msg: 'Partie déjà pleine 😾' })); setTimeout(() => conn.close(), 400); });
       return;
     }
-    bindConn(conn, () => { net.peer = true; startGame(); netSend({ t: 'start' }); });
+    if (net.conn) { const stale = net.conn; net.conn = null; stale.close(); }   // the guest retried
+    bindConn(conn, () => { net.peer = true; stopRelayListening(); startGame(); netSend({ t: 'start' }); });
   });
   // the free PeerJS service sometimes drops the waiting host: reconnect with the same code
   let retries = 0;
@@ -812,26 +907,30 @@ function joinOnline(attempt = 0) {
   const code = $('codeIn').value.trim().toUpperCase();
   if (!/^[A-Z]{4}$/.test(code)) return netStatus('Entre le code à 4 lettres donné par ton adversaire');
   if (!window.Peer) return netStatus('Bibliothèque réseau introuvable (pas de connexion internet ?) 😿');
-  if (net.role === 'host' || net.peer) return;
+  if (net.role === 'host' || net.peer || net.relay) return;
   initAudio();
   resetPeer();
   netStatus('Connexion à la partie ' + code + '…');
-  const peer = new window.Peer();
+  const peer = NO_DIRECT ? new window.Peer(undefined, { config: { iceServers: [], iceTransportPolicy: 'relay' } }) : new window.Peer();
   net.peerObj = peer;
   let timer = 0;
+  const fallback = () => { clearTimeout(timer); if (net.peer || net.relay) return; resetPeer(); guestRelay(code); };
+  if (FORCE_RELAY) { resetPeer(); return void guestRelay(code); }
   peer.on('open', () => {
     const conn = peer.connect(PEER_PREFIX + code, { reliable: true });
     bindConn(conn, () => { clearTimeout(timer); net.role = 'guest'; net.peer = true; netStatus('Connecté ! La partie démarre…'); });
-    timer = setTimeout(() => { if (!net.peer) { resetPeer(); netStatus('Impossible de joindre l\'hôte 😿 — vérifie le code et réessaie'); } }, 15000);
+    timer = setTimeout(fallback, 7000);   // no direct link by now: go through the relay
   });
   peer.on('error', e => {
-    if (net.peer) return;
-    clearTimeout(timer); resetPeer();
+    if (net.peer || net.relay) return;
+    clearTimeout(timer);
+    // 'peer-unavailable': unknown code for the matchmaking service — the host may still be on the relay
     if (TRANSIENT.includes(e.type) && attempt < 2) {   // flaky matchmaking service: try again
+      resetPeer();
       netStatus('Connexion instable, nouvel essai… 🔄');
       return setTimeout(() => joinOnline(attempt + 1), 1500);
     }
-    netStatus(e.type === 'peer-unavailable' ? 'Code inconnu 🙀 (la partie est-elle bien créée ?)' : 'Erreur réseau (' + e.type + ') — réessaie 😿');
+    fallback();   // matchmaking service unusable: the relay may still work
   });
 }
 function onNet(m) {
